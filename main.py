@@ -9,9 +9,9 @@ import json
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
-from functools import wraps
 import sys
 import threading
+import asyncio
 
 try:
     from flask import Flask, jsonify
@@ -35,25 +35,30 @@ except ImportError:
     print("pip install python-telegram-bot")
     sys.exit(1)
 
-# Configure logging - minimal
+# Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
-    handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
-    ]
+    handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
 # Configuration
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8902605528:AAE2qAoiN3bnClx0nl6Zxw6S753KbyzPdP4")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8107617495:AAEjCpxJ0qVmG1m7C5rzAU_maM2t9IlnUJs")
 ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_IDS", "604500512").split(",") if id.strip()]
 DB_FILE = "musicgpt_bot.json"
 REQUEST_TIMEOUT = 30
 PORT = int(os.environ.get("PORT", 8080))
 
+# Developer Credits
+DEV_CREDITS = "👨‍💻 **Developers:** @KeemSGHLL & @poqruette"
+DEV_NAMES = ["@KeemSGHLL", "@poqruette"]
+
 os.makedirs("output", exist_ok=True)
+
+# Global status tracking
+user_status = {}
+processing_users = set()
 
 def load_db():
     if os.path.exists(DB_FILE):
@@ -68,8 +73,8 @@ def save_db(data):
     try:
         with open(DB_FILE, 'w') as f:
             json.dump(data, f, indent=2, default=str)
-    except Exception as e:
-        logger.error(f"Failed to save database: {e}")
+    except:
+        pass
 
 class Database:
     @staticmethod
@@ -243,6 +248,14 @@ class Database:
             return None
         except:
             return None
+    
+    @staticmethod
+    def get_all_users():
+        try:
+            data = load_db()
+            return data["users"]
+        except:
+            return {}
 
 class TempMailORG:
     def __init__(self):
@@ -252,9 +265,7 @@ class TempMailORG:
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
             "Origin": "https://temp-mail.org",
-            "Referer": "https://temp-mail.org/",
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache"
+            "Referer": "https://temp-mail.org/"
         })
         self.token = None
         self.email_address = None
@@ -265,18 +276,18 @@ class TempMailORG:
             mailbox_resp = self.session.post(
                 "https://web2.temp-mail.org/mailbox",
                 headers={"Content-Length": "0", "Content-Type": "application/json"},
-                timeout=REQUEST_TIMEOUT
+                timeout=30
             )
 
             if mailbox_resp.status_code not in [200, 201]:
-                raise Exception("Failed to create mailbox")
+                raise Exception("Service unavailable")
 
             data = mailbox_resp.json()
             self.token = data.get("token")
             self.email_address = data.get("mailbox")
 
             if not self.token or not self.email_address:
-                raise Exception("No token or email received")
+                raise Exception("No email created")
 
             self.session.headers["Authorization"] = f"Bearer {self.token}"
 
@@ -288,7 +299,7 @@ class TempMailORG:
         if not self.token:
             return []
         try:
-            resp = self.session.get("https://web2.temp-mail.org/messages", timeout=REQUEST_TIMEOUT)
+            resp = self.session.get("https://web2.temp-mail.org/messages", timeout=30)
             if resp.status_code != 200:
                 return []
             data = resp.json()
@@ -298,12 +309,23 @@ class TempMailORG:
         except:
             return []
 
-    def wait_for_otp(self, timeout: int = 180, poll_interval: int = 5) -> Optional[str]:
+    def wait_for_otp(self, timeout: int = 180, poll_interval: int = 5, status_callback=None) -> Optional[str]:
         start_time = time.time()
         seen_ids = set()
+        attempts = 0
 
         while time.time() - start_time < timeout:
+            attempts += 1
             try:
+                if status_callback:
+                    elapsed = int(time.time() - start_time)
+                    remaining = timeout - elapsed
+                    # Use asyncio to call the callback if it's a coroutine
+                    if asyncio.iscoroutinefunction(status_callback):
+                        asyncio.create_task(status_callback(f"⏳ Checking for OTP... ({elapsed}s elapsed, {remaining}s remaining)"))
+                    else:
+                        status_callback(f"⏳ Checking for OTP... ({elapsed}s elapsed, {remaining}s remaining)")
+                
                 messages = self.get_messages()
                 for msg in messages:
                     msg_id = msg.get("_id") or msg.get("id", "")
@@ -314,15 +336,15 @@ class TempMailORG:
                     subject = msg.get("subject", "")
                     body = msg.get("bodyPreview", "")
                     html = msg.get("bodyHtml", "")
-                    content = f"{subject} {body} {html}".lower()
+                    content = f"{subject} {body} {html}"
                     
-                    # Look for 6-digit OTP
+                    # Find 6-digit code
                     codes = re.findall(r'\b(\d{6})\b', content)
                     if codes:
                         return codes[0]
                     
-                    # Look for code patterns
-                    if "code" in content or "otp" in content:
+                    # Find code patterns
+                    if "code" in content.lower() or "otp" in content.lower():
                         codes = re.findall(r'\b(\d{4,8})\b', content)
                         for code in codes:
                             if len(code) >= 4 and code.isdigit():
@@ -348,9 +370,8 @@ class MusicGPTAPI:
         self.session.cookies.set("anonymous_id", self.anonymous_id, domain=".musicgpt.com")
 
         self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Accept": "application/json, text/plain, */*",
-            "Accept-Language": "en-US,en;q=0.9",
             "Content-Type": "application/json",
             "Origin": "https://musicgpt.com",
             "Referer": "https://musicgpt.com/"
@@ -367,7 +388,7 @@ class MusicGPTAPI:
     def send_otp(self, email: str) -> Optional[str]:
         try:
             payload = {"email": email, "language": "en_US"}
-            resp = self.session.post(f"{self.BASE_URL}/authentication/login/email", json=payload, timeout=REQUEST_TIMEOUT)
+            resp = self.session.post(f"{self.BASE_URL}/authentication/login/email", json=payload, timeout=30)
             if resp.status_code != 200:
                 return None
             data = resp.json()
@@ -386,7 +407,7 @@ class MusicGPTAPI:
     def verify_otp(self, otp: str, validation_token: str) -> bool:
         try:
             payload = {"otp": otp, "validation_token": validation_token}
-            resp = self.session.post(f"{self.BASE_URL}/authentication/login/verify-otp", json=payload, timeout=REQUEST_TIMEOUT)
+            resp = self.session.post(f"{self.BASE_URL}/authentication/login/verify-otp", json=payload, timeout=30)
             if resp.status_code != 200:
                 return False
             data = resp.json()
@@ -409,7 +430,7 @@ class MusicGPTAPI:
             resp = self.session.post(
                 f"{self.BASE_URL}/users/front/set-initial-names",
                 json={"display_name": display_name, "username": username},
-                timeout=REQUEST_TIMEOUT
+                timeout=30
             )
             return resp.status_code == 200
         except:
@@ -428,10 +449,10 @@ class MusicGPTAPI:
                 "conversion_id_2": conversion_id_2
             }
 
-            resp = self.session.post(f"{self.BASE_URL}/prompt/front/submit", json=payload, timeout=REQUEST_TIMEOUT)
+            resp = self.session.post(f"{self.BASE_URL}/prompt/front/submit", json=payload, timeout=60)
 
             if resp.status_code not in [200, 201]:
-                return {"error": f"HTTP {resp.status_code}", "success": False}
+                return {"error": "Server error", "success": False}
 
             try:
                 data = resp.json()
@@ -443,7 +464,7 @@ class MusicGPTAPI:
                 eta = inner.get("eta", 90)
                 success = data.get("success", True)
                 if not success:
-                    return {"error": data.get("message", "Unknown"), "success": False}
+                    return {"error": "Failed", "success": False}
             else:
                 eta = 90
 
@@ -454,11 +475,11 @@ class MusicGPTAPI:
                 "success": True
             }
         except:
-            return {"error": "Failed to submit prompt", "success": False}
+            return {"error": "Connection error", "success": False}
 
     def get_audio(self, audio_id: str) -> Optional[dict]:
         try:
-            resp = self.session.get(f"{self.BASE_URL}/audio/front/get-by-id/{audio_id}", timeout=REQUEST_TIMEOUT)
+            resp = self.session.get(f"{self.BASE_URL}/audio/front/get-by-id/{audio_id}", timeout=30)
             if resp.status_code != 200:
                 return None
             data = resp.json()
@@ -466,11 +487,21 @@ class MusicGPTAPI:
         except:
             return None
 
-    def wait_for_audio(self, audio_id: str, eta: int, timeout_extra: int = 300) -> Optional[dict]:
+    def wait_for_audio(self, audio_id: str, eta: int, timeout_extra: int = 300, status_callback=None) -> Optional[dict]:
         timeout = eta + timeout_extra
         start_time = time.time()
+        elapsed = 0
+        
         while time.time() - start_time < timeout:
             try:
+                elapsed = int(time.time() - start_time)
+                if status_callback:
+                    progress = min(100, int((elapsed / timeout) * 100))
+                    if asyncio.iscoroutinefunction(status_callback):
+                        asyncio.create_task(status_callback(f"🎵 Generating... {progress}%\n⏳ {elapsed}s / {timeout}s"))
+                    else:
+                        status_callback(f"🎵 Generating... {progress}%\n⏳ {elapsed}s / {timeout}s")
+                
                 data = self.get_audio(audio_id)
                 if data:
                     status = data.get("conversion_status", "")
@@ -485,7 +516,7 @@ class MusicGPTAPI:
 
     def get_download_url(self, audio_id: str) -> Optional[str]:
         try:
-            resp = self.session.get(f"{self.BASE_URL}/download/front/v3/{audio_id}/FULL_SONG", timeout=REQUEST_TIMEOUT)
+            resp = self.session.get(f"{self.BASE_URL}/download/front/v3/{audio_id}/FULL_SONG", timeout=30)
             if resp.status_code != 200:
                 return None
             data = resp.json()
@@ -515,6 +546,23 @@ class MusicGPTBot:
     def is_authenticated(self, user_id):
         session = Database.get_session(user_id)
         return session[0] == 1 if session else False
+    
+    async def update_status(self, user_id, status):
+        """Update user status with live indicator"""
+        user_status[str(user_id)] = {
+            "status": status,
+            "timestamp": datetime.now().isoformat(),
+            "is_processing": True
+        }
+    
+    async def clear_status(self, user_id):
+        """Clear user status after processing"""
+        if str(user_id) in user_status:
+            user_status[str(user_id)]["is_processing"] = False
+            user_status[str(user_id)]["status"] = "Ready"
+        
+        if user_id in processing_users:
+            processing_users.remove(user_id)
     
     async def check_channel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_chat.type == ChatType.PRIVATE:
@@ -546,16 +594,21 @@ class MusicGPTBot:
         if not Database.get_user(user.id):
             Database.create_user(user.id, user.username, user.first_name, user.last_name)
         
+        # Check if user is processing
+        is_processing = user.id in processing_users
+        
         keyboard = [
             [InlineKeyboardButton("🔑 Login", callback_data="login")],
             [InlineKeyboardButton("🎵 Generate Music", callback_data="generate")],
             [InlineKeyboardButton("▶️ Play Last Track", callback_data="play")],
             [InlineKeyboardButton("📊 My Status", callback_data="status")],
             [InlineKeyboardButton("👤 My Profile", callback_data="profile")],
+            [InlineKeyboardButton("📈 Live Status", callback_data="live_status")]
         ]
         
         if self.is_admin(user.id):
             keyboard.append([InlineKeyboardButton("👑 Admin Panel", callback_data="admin_panel")])
+            keyboard.append([InlineKeyboardButton("👥 All Users Status", callback_data="all_users_status")])
         
         if not self.is_approved(user.id):
             keyboard = [
@@ -564,6 +617,9 @@ class MusicGPTBot:
             ]
         
         welcome = f"🎵 **Welcome {user.first_name}!**\n\n"
+        if is_processing:
+            welcome += "🔄 **You have an active process running!**\n\n"
+        
         if self.is_approved(user.id):
             if self.is_authenticated(user.id):
                 welcome += "✅ You are **authenticated** and ready to generate music!\n\n"
@@ -575,7 +631,93 @@ class MusicGPTBot:
             welcome += "⏳ You need **approval** to use this bot.\n\n"
             welcome += "Click **'Request Access'** to ask for permission."
         
+        welcome += f"\n\n{DEV_CREDITS}"
+        
         await update.message.reply_text(welcome, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def live_status_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show live status for current user"""
+        if not await self.check_channel(update, context):
+            return
+        
+        query = update.callback_query
+        await query.answer()
+        user_id = update.effective_user.id
+        
+        status_data = user_status.get(str(user_id), {})
+        is_processing = user_id in processing_users
+        
+        status_text = "📊 **Live Status**\n\n"
+        
+        if is_processing:
+            status_text += "🔄 **Processing...**\n"
+            status_text += f"Status: {status_data.get('status', 'Initializing...')}\n"
+            status_text += f"Started: {status_data.get('timestamp', 'Just now')}\n\n"
+            status_text += "⏳ Please wait for completion..."
+        else:
+            status_text += "✅ **Idle**\n"
+            status_text += "Ready for new requests!\n\n"
+            if status_data:
+                status_text += f"Last activity: {status_data.get('status', 'None')}\n"
+                status_text += f"Time: {status_data.get('timestamp', 'Unknown')}"
+        
+        status_text += f"\n\n{DEV_CREDITS}"
+        
+        keyboard = [[InlineKeyboardButton("🔄 Refresh", callback_data="live_status")],
+                   [InlineKeyboardButton("🔙 Back", callback_data="back")]]
+        
+        await query.message.reply_text(
+            status_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+    
+    async def all_users_status_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show status of all users (admin only)"""
+        if not await self.check_channel(update, context):
+            return
+        
+        query = update.callback_query
+        await query.answer()
+        user_id = update.effective_user.id
+        
+        if not self.is_admin(user_id):
+            await query.message.reply_text("❌ Admin only.")
+            return
+        
+        users = Database.get_all_users()
+        
+        status_text = "👥 **All Users Status**\n\n"
+        
+        if not users:
+            status_text += "No users registered yet."
+        else:
+            active_count = 0
+            for uid, user_data in users.items():
+                is_processing = int(uid) in processing_users
+                if is_processing:
+                    active_count += 1
+                    status = user_status.get(uid, {})
+                    status_text += f"🔄 **@{user_data.get('username', 'Unknown')}**\n"
+                    status_text += f"Status: {status.get('status', 'Processing...')}\n"
+                    status_text += f"Started: {status.get('timestamp', 'Just now')}\n\n"
+            
+            if active_count == 0:
+                status_text += "✅ No users currently processing.\n\n"
+            
+            status_text += f"Total users: {len(users)}\n"
+            status_text += f"Currently active: {active_count}"
+        
+        status_text += f"\n\n{DEV_CREDITS}"
+        
+        keyboard = [[InlineKeyboardButton("🔄 Refresh", callback_data="all_users_status")],
+                   [InlineKeyboardButton("🔙 Back", callback_data="admin_panel")]]
+        
+        await query.message.reply_text(
+            status_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
     
     async def login_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.check_channel(update, context):
@@ -585,42 +727,61 @@ class MusicGPTBot:
         await query.answer()
         user_id = update.effective_user.id
         
+        if user_id in processing_users:
+            await query.message.reply_text("⏳ You have a process running. Please wait.")
+            return
+        
         if not self.is_approved(user_id):
             await query.message.reply_text("❌ You need to be approved first. Use /start")
             return
         
-        status_msg = await query.message.reply_text("🔑 Creating temporary email...")
+        processing_users.add(user_id)
+        await self.update_status(user_id, "Creating temporary email...")
+        
+        status_msg = await query.message.reply_text("🔄 **Creating temporary email...**\n\n⏳ Please wait...", parse_mode='Markdown')
         
         try:
-            # Auto-login with temp-mail.org
+            await self.update_status(user_id, "Creating email account...")
+            await status_msg.edit_text("🔄 **Creating email account...**\n\n⏳ Connecting to temp-mail.org...")
+            
             self.temp_mail = TempMailORG()
             email_data = self.temp_mail.create_account()
             
-            await status_msg.edit_text(f"📧 Email created: `{email_data['email']}`\n\nRequesting OTP...")
+            await self.update_status(user_id, f"Email created: {email_data['email']}")
+            await status_msg.edit_text(f"📧 **Email created**\n\n`{email_data['email']}`\n\n🔄 Requesting OTP...")
             
             self.api = MusicGPTAPI()
             validation_token = self.api.send_otp(email_data["email"])
             
             if not validation_token:
+                await self.clear_status(user_id)
                 await status_msg.edit_text("❌ Failed to send OTP. Please try again.")
                 return
             
-            await status_msg.edit_text(f"📧 Waiting for OTP...\n\nCheck your email: `{email_data['email']}`\n\n⏳ This may take up to 2 minutes...")
+            await self.update_status(user_id, "Waiting for OTP...")
             
-            otp = self.temp_mail.wait_for_otp(timeout=180)
+            # Create a callback for OTP status updates
+            async def update_otp_status(message):
+                await status_msg.edit_text(f"📧 **Waiting for OTP...**\n\nCheck your email: `{email_data['email']}`\n\n{message}\n\n⏳ This may take up to 2 minutes...", parse_mode='Markdown')
+            
+            otp = self.temp_mail.wait_for_otp(timeout=180, status_callback=update_otp_status)
             
             if not otp:
+                await self.clear_status(user_id)
                 await status_msg.edit_text("❌ OTP not received. Please try again.")
                 return
             
+            await self.update_status(user_id, "OTP received, verifying...")
             await status_msg.edit_text(f"✅ OTP received! Verifying...")
             
             success = self.api.verify_otp(otp, validation_token)
             
             if not success:
+                await self.clear_status(user_id)
                 await status_msg.edit_text("❌ Verification failed. Please try again.")
                 return
             
+            await self.update_status(user_id, "Setting display name...")
             username = email_data["email"].split("@")[0]
             display_name = f"User_{user_id}"
             
@@ -632,24 +793,34 @@ class MusicGPTBot:
                 self.api.access_token, self.api.user_id
             )
             
+            await self.clear_status(user_id)
+            
             keyboard = [
                 [InlineKeyboardButton("🎵 Generate Music", callback_data="generate")],
                 [InlineKeyboardButton("📊 My Status", callback_data="status")],
                 [InlineKeyboardButton("🔙 Back", callback_data="back")]
             ]
             
+            success_text = f"✅ **Login Successful!**\n\n"
+            success_text += f"Display: `{display_name}`\n"
+            success_text += f"Email: `{email_data['email']}`\n"
+            success_text += f"Provider: `temp-mail.org`\n\n"
+            success_text += f"🎵 Click **'Generate Music'** to start creating!\n\n"
+            success_text += DEV_CREDITS
+            
             await status_msg.edit_text(
-                f"✅ **Login Successful!**\n\n"
-                f"Display: `{display_name}`\n"
-                f"Email: `{email_data['email']}`\n"
-                f"Provider: `temp-mail.org`\n\n"
-                f"🎵 Click **'Generate Music'** to start creating!",
+                success_text,
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
             
         except Exception as e:
-            await status_msg.edit_text(f"❌ Login error: {str(e)}\n\nPlease try again.")
+            await self.clear_status(user_id)
+            error_msg = str(e)
+            if "temporary" in error_msg.lower() or "email" in error_msg.lower():
+                await status_msg.edit_text("❌ Could not create temporary email. Please try again.")
+            else:
+                await status_msg.edit_text("❌ Login failed. Please try again.")
         finally:
             if self.temp_mail:
                 try:
@@ -666,6 +837,10 @@ class MusicGPTBot:
         await query.answer()
         user_id = update.effective_user.id
         
+        if user_id in processing_users:
+            await query.message.reply_text("⏳ You have a process running. Please wait.")
+            return
+        
         if not self.is_approved(user_id):
             await query.message.reply_text("❌ Access denied. Request approval first.")
             return
@@ -674,7 +849,8 @@ class MusicGPTBot:
             keyboard = [[InlineKeyboardButton("🔑 Login First", callback_data="login")]]
             await query.message.reply_text(
                 "❌ **Not Authenticated**\n\n"
-                "You need to login first before generating music.",
+                "You need to login first before generating music.\n\n"
+                f"{DEV_CREDITS}",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
@@ -687,7 +863,7 @@ class MusicGPTBot:
             "• `Epic orchestral music with dramatic violins`\n"
             "• `Chill lofi beats for studying`\n"
             "• `Electronic dance music with heavy bass`\n\n"
-            "✏️ Type your prompt now:"
+            f"✏️ Type your prompt now:\n\n{DEV_CREDITS}"
         )
         context.user_data['awaiting_prompt'] = True
     
@@ -709,39 +885,82 @@ class MusicGPTBot:
             [InlineKeyboardButton("🔙 Back", callback_data="back")]
         ]
         await update.message.reply_text(
-            "I'm not sure what you want. Please use the buttons below:",
+            f"I'm not sure what you want. Please use the buttons below:\n\n{DEV_CREDITS}",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     
     async def process_generation(self, update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str):
         user_id = update.effective_user.id
-        status_msg = await update.message.reply_text(f"🎵 Generating music...\n\nPrompt: `{prompt}`\n\n⏳ This may take 1-2 minutes...", parse_mode='Markdown')
+        
+        if user_id in processing_users:
+            await update.message.reply_text("⏳ You have a process running. Please wait.")
+            return
+        
+        processing_users.add(user_id)
+        await self.update_status(user_id, f"Generating: {prompt[:30]}...")
+        
+        status_msg = await update.message.reply_text(
+            f"🎵 **Generating music...**\n\n"
+            f"Prompt: `{prompt}`\n\n"
+            f"🔄 Initializing...",
+            parse_mode='Markdown'
+        )
         
         try:
             session = Database.get_session(user_id)
             if not session or not session[4]:
+                await self.clear_status(user_id)
                 await status_msg.edit_text("❌ Session expired. Login again.")
                 return
             
             self.api = MusicGPTAPI(session[4])
             
+            await self.update_status(user_id, "Submitting prompt...")
+            await status_msg.edit_text(f"🎵 **Submitting prompt...**\n\nPrompt: `{prompt}`", parse_mode='Markdown')
+            
             result = self.api.submit_prompt(prompt)
             if not result.get("success"):
-                await status_msg.edit_text(f"❌ Failed: {result.get('error', 'Unknown error')}")
+                await self.clear_status(user_id)
+                await status_msg.edit_text("❌ Failed to generate. Please try again.")
                 return
             
-            await status_msg.edit_text(f"🎵 Generating...\n\nPrompt: `{prompt}`\n\n⏳ ETA: {result['eta']} seconds", parse_mode='Markdown')
+            eta = result['eta']
             
-            audio_data = self.api.wait_for_audio(result["conversion_id"], result["eta"])
+            # Progress tracking for generation
+            async def update_gen_status(message):
+                await status_msg.edit_text(
+                    f"🎵 **Generating music...**\n\n"
+                    f"Prompt: `{prompt}`\n\n"
+                    f"{message}\n\n"
+                    f"⏳ Estimated time: {eta}s",
+                    parse_mode='Markdown'
+                )
+            
+            await self.update_status(user_id, "Generating audio...")
+            await update_gen_status("🎵 Creating your music...")
+            
+            audio_data = self.api.wait_for_audio(
+                result["conversion_id"], 
+                eta, 
+                status_callback=update_gen_status
+            )
+            
             if not audio_data:
+                await self.clear_status(user_id)
                 await status_msg.edit_text("❌ Generation failed. Please try again.")
                 return
             
+            await self.update_status(user_id, "Getting download URL...")
             audio_id = audio_data.get("id", result["conversion_id"])
             download_url = self.api.get_download_url(audio_id)
+            
             if not download_url:
+                await self.clear_status(user_id)
                 await status_msg.edit_text("❌ Failed to get download URL.")
                 return
+            
+            await self.update_status(user_id, "Downloading audio...")
+            await status_msg.edit_text(f"📥 **Downloading audio...**\n\n⏳ Please wait...", parse_mode='Markdown')
             
             title = audio_data.get("title", "music")
             safe_title = re.sub(r'[^\w\-_\. ]', '_', title)
@@ -750,9 +969,7 @@ class MusicGPTBot:
             
             filepath = os.path.join("output", filename)
             
-            await status_msg.edit_text(f"📥 Downloading...")
-            
-            resp = requests.get(download_url, stream=True, timeout=REQUEST_TIMEOUT * 4)
+            resp = requests.get(download_url, stream=True, timeout=120)
             if resp.status_code == 200:
                 with open(filepath, "wb") as f:
                     for chunk in resp.iter_content(8192):
@@ -762,14 +979,19 @@ class MusicGPTBot:
                 Database.add_generation(user_id, prompt, audio_id, title, filepath)
                 Database.update_last_audio(user_id, audio_id, title, filepath)
                 
+                await self.update_status(user_id, "Sending audio...")
+                await status_msg.edit_text(f"📤 **Sending your music...**", parse_mode='Markdown')
+                
                 with open(filepath, "rb") as f:
                     await context.bot.send_audio(
                         chat_id=update.effective_chat.id,
                         audio=f,
                         title=title,
                         performer="MusicGPT AI",
-                        caption=f"🎵 **{title}**\n\nPrompt: `{prompt}`\n\n✨ Generated by MusicGPT AI"
+                        caption=f"🎵 **{title}**\n\nPrompt: `{prompt}`\n\n✨ Generated by MusicGPT AI\n\n{DEV_CREDITS}"
                     )
+                
+                await self.clear_status(user_id)
                 
                 keyboard = [
                     [InlineKeyboardButton("▶️ Play Again", callback_data="play")],
@@ -777,18 +999,20 @@ class MusicGPTBot:
                     [InlineKeyboardButton("📊 My Status", callback_data="status")]
                 ]
                 await status_msg.edit_text(
-                    "✅ **Generation Complete!**\n\n"
+                    f"✅ **Generation Complete!**\n\n"
                     f"Title: `{title}`\n"
                     f"Duration: {audio_data.get('audio_length_ms', 0) / 1000:.1f}s\n\n"
-                    "What would you like to do next?",
+                    f"What would you like to do next?\n\n{DEV_CREDITS}",
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode='Markdown'
                 )
             else:
+                await self.clear_status(user_id)
                 await status_msg.edit_text("❌ Download failed.")
                 
         except Exception as e:
-            await status_msg.edit_text(f"❌ Failed to generate music. Please try again.")
+            await self.clear_status(user_id)
+            await status_msg.edit_text("❌ Failed to generate music. Please try again.")
     
     async def play_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.check_channel(update, context):
@@ -814,7 +1038,8 @@ class MusicGPTBot:
                     chat_id=update.effective_chat.id,
                     audio=f,
                     title=title,
-                    performer="MusicGPT AI"
+                    performer="MusicGPT AI",
+                    caption=f"{DEV_CREDITS}"
                 )
         elif audio_id:
             await query.message.reply_text(f"🔄 Fetching audio...", parse_mode='Markdown')
@@ -836,7 +1061,7 @@ class MusicGPTBot:
                     
                     filepath = os.path.join("output", filename)
                     
-                    resp = requests.get(download_url, stream=True, timeout=REQUEST_TIMEOUT * 4)
+                    resp = requests.get(download_url, stream=True, timeout=120)
                     if resp.status_code == 200:
                         with open(filepath, "wb") as f:
                             for chunk in resp.iter_content(8192):
@@ -851,7 +1076,8 @@ class MusicGPTBot:
                                 chat_id=update.effective_chat.id,
                                 audio=f,
                                 title=title,
-                                performer="MusicGPT AI"
+                                performer="MusicGPT AI",
+                                caption=f"{DEV_CREDITS}"
                             )
                     else:
                         await query.message.reply_text("❌ Failed to download.")
@@ -884,11 +1110,15 @@ class MusicGPTBot:
         display = session[2] or "Not set"
         provider = session[3] or "Not set"
         
+        is_processing = user_id in processing_users
+        status_data = user_status.get(str(user_id), {})
+        
         keyboard = []
         if authenticated:
             keyboard.append([InlineKeyboardButton("🎵 Generate Music", callback_data="generate")])
         else:
             keyboard.append([InlineKeyboardButton("🔑 Login", callback_data="login")])
+        keyboard.append([InlineKeyboardButton("📈 Live Status", callback_data="live_status")])
         keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="back")])
         
         status_text = f"📊 **Session Status**\n\n"
@@ -899,10 +1129,15 @@ class MusicGPTBot:
             status_text += f"Provider: `{provider}`\n"
         status_text += f"User ID: `{user_id}`\n\n"
         
-        if authenticated:
+        if is_processing:
+            status_text += "🔄 **Currently Processing**\n"
+            status_text += f"Status: {status_data.get('status', 'Initializing...')}\n"
+        elif authenticated:
             status_text += "🎵 Ready to generate music!"
         else:
             status_text += "🔑 Click 'Login' to authenticate."
+        
+        status_text += f"\n\n{DEV_CREDITS}"
         
         await query.message.reply_text(
             status_text,
@@ -942,6 +1177,8 @@ class MusicGPTBot:
         else:
             profile_text += "🔑 Use 'Login' to authenticate."
         
+        profile_text += f"\n\n{DEV_CREDITS}"
+        
         await query.message.reply_text(
             profile_text,
             reply_markup=InlineKeyboardMarkup(keyboard),
@@ -961,15 +1198,19 @@ class MusicGPTBot:
             return
         
         pending = Database.get_pending_approvals()
+        active_users = len(processing_users)
         
         keyboard = [
             [InlineKeyboardButton("📋 View Pending", callback_data="view_pending")],
+            [InlineKeyboardButton("👥 All Users Status", callback_data="all_users_status")],
             [InlineKeyboardButton("🔙 Back", callback_data="back")]
         ]
         
         admin_text = f"👑 **Admin Panel**\n\n"
-        admin_text += f"Pending Requests: {len(pending)}\n\n"
-        admin_text += "Click 'View Pending' to see all requests."
+        admin_text += f"Pending Requests: {len(pending)}\n"
+        admin_text += f"Active Users: {active_users}\n\n"
+        admin_text += "Click 'View Pending' to see all requests.\n\n"
+        admin_text += DEV_CREDITS
         
         await query.message.reply_text(
             admin_text,
@@ -994,7 +1235,7 @@ class MusicGPTBot:
         if not pending:
             keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="admin_panel")]]
             await query.message.reply_text(
-                "📋 No pending requests.",
+                f"📋 No pending requests.\n\n{DEV_CREDITS}",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             return
@@ -1011,7 +1252,7 @@ class MusicGPTBot:
                 f"**Pending Request**\n\n"
                 f"User: {p[2]} @{p[1]}\n"
                 f"ID: `{p[0]}`\n"
-                f"Requested: {p[4][:19]}",
+                f"Requested: {p[4][:19]}\n\n{DEV_CREDITS}",
                 reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode='Markdown'
             )
@@ -1053,9 +1294,9 @@ class MusicGPTBot:
         
         keyboard = [[InlineKeyboardButton("📊 Check Status", callback_data="status")]]
         await query.message.reply_text(
-            "✅ **Request Sent!**\n\n"
-            "Your access request has been sent to the admins.\n"
-            "You'll be notified when approved.",
+            f"✅ **Request Sent!**\n\n"
+            f"Your access request has been sent to the admins.\n"
+            f"You'll be notified when approved.\n\n{DEV_CREDITS}",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
         )
@@ -1085,6 +1326,10 @@ class MusicGPTBot:
             await self.status_callback(update, context)
         elif data == "profile":
             await self.profile_callback(update, context)
+        elif data == "live_status":
+            await self.live_status_callback(update, context)
+        elif data == "all_users_status":
+            await self.all_users_status_callback(update, context)
         elif data == "admin_panel":
             await self.admin_panel_callback(update, context)
         elif data == "view_pending":
@@ -1113,33 +1358,36 @@ class MusicGPTBot:
         
         if action == "approve":
             Database.approve_user(target)
-            await query.message.edit_text(f"✅ User `{target}` approved!")
+            await query.message.edit_text(f"✅ User approved!\n\n{DEV_CREDITS}")
             try:
-                await context.bot.send_message(chat_id=target, text="🎉 **Approved!**\n\nYou can now use the bot. Click /start to begin.")
+                await context.bot.send_message(
+                    chat_id=target, 
+                    text=f"🎉 **Approved!**\n\nYou can now use the bot. Click /start to begin.\n\n{DEV_CREDITS}"
+                )
             except:
                 pass
         else:
             Database.reject_user(target)
-            await query.message.edit_text(f"❌ User `{target}` rejected.")
+            await query.message.edit_text(f"❌ User rejected.\n\n{DEV_CREDITS}")
             try:
-                await context.bot.send_message(chat_id=target, text="❌ **Denied**\n\nYour access request was rejected. Contact an admin.")
+                await context.bot.send_message(
+                    chat_id=target, 
+                    text=f"❌ **Denied**\n\nYour access request was rejected.\n\n{DEV_CREDITS}"
+                )
             except:
                 pass
     
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         error = context.error
         
-        # Only log real errors (not conflicts)
         if "Conflict" in str(error) and "getUpdates" in str(error):
             return
         
-        logger.error(f"Update {update} caused error: {error}")
-        
         if update and update.effective_message:
             try:
-                keyboard = [[InlineKeyboardButton("🔄 Try Again", callback_data="back")]]
+                keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back")]]
                 await update.effective_message.reply_text(
-                    "❌ An error occurred. Please try again.",
+                    f"❌ Something went wrong. Please try again.\n\n{DEV_CREDITS}",
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
             except:
@@ -1153,7 +1401,12 @@ def run_health_server():
         @health_app.route('/')
         @health_app.route('/health')
         def health():
-            return jsonify({"status": "healthy", "timestamp": datetime.now().isoformat()}), 200
+            return jsonify({
+                "status": "healthy",
+                "active_users": len(processing_users),
+                "total_users": len(Database.get_all_users()),
+                "developers": ["@KeemSGHLL", "@poqruette"]
+            }), 200
         
         health_app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
     except:
@@ -1186,6 +1439,8 @@ def main():
     print("✅ Bot started!")
     print(f"👑 Admin ID: {ADMIN_IDS[0] if ADMIN_IDS else 'Not set'}")
     print("🎵 MusicGPT integration ready!")
+    print("📈 Live status tracking enabled!")
+    print(f"👨‍💻 Developers: @KeemSGHLL & @poqruette")
     
     try:
         app.run_polling(
