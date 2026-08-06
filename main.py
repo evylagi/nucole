@@ -40,8 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration - Use environment variables for security
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8902605528:AAE2qAoiN3bnClx0nl6Zxw6S753KbyzPdP4
-")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8902605528:AAE2qAoiN3bnClx0nl6Zxw6S753KbyzPdP4")
 ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_IDS", "604500512").split(",") if id.strip()]
 DB_FILE = "musicgpt_bot.json"
 DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
