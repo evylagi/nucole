@@ -8,10 +8,11 @@ import os
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Dict, Set
 import sys
 import threading
 import asyncio
+from asyncio import Lock
 
 try:
     from flask import Flask, jsonify
@@ -56,11 +57,13 @@ DEV_NAMES = ["@KeemSGHLL", "@poqruette"]
 
 os.makedirs("output", exist_ok=True)
 
-# Global status tracking
+# Global status tracking with locks for thread safety
 user_status = {}
-processing_users = set()
+processing_users: Set[int] = set()
+status_lock = Lock()
+repeat_users: Dict[int, bool] = {}
 
-# Loading animation frames - simplified
+# Loading animation frames
 LOADING_FRAMES = ["◐", "◓", "◑", "◒"]
 
 def load_db():
@@ -251,6 +254,14 @@ class Database:
             return None
         except:
             return None
+    
+    @staticmethod
+    def get_all_users():
+        try:
+            data = load_db()
+            return data["users"]
+        except:
+            return {}
 
 class TempMailORG:
     def __init__(self):
@@ -304,20 +315,12 @@ class TempMailORG:
         except:
             return []
 
-    def wait_for_otp(self, timeout: int = 180, poll_interval: int = 5, status_callback=None) -> Optional[str]:
+    def wait_for_otp(self, timeout: int = 180, poll_interval: int = 5) -> Optional[str]:
         start_time = time.time()
         seen_ids = set()
 
         while time.time() - start_time < timeout:
             try:
-                if status_callback:
-                    elapsed = int(time.time() - start_time)
-                    remaining = timeout - elapsed
-                    if asyncio.iscoroutinefunction(status_callback):
-                        asyncio.create_task(status_callback(f"⏳ Checking for OTP... ({elapsed}s elapsed, {remaining}s remaining)"))
-                    else:
-                        status_callback(f"⏳ Checking for OTP... ({elapsed}s elapsed, {remaining}s remaining)")
-                
                 messages = self.get_messages()
                 for msg in messages:
                     msg_id = msg.get("_id") or msg.get("id", "")
@@ -479,39 +482,12 @@ class MusicGPTAPI:
         except:
             return None
 
-    def wait_for_audio(self, audio_id: str, eta: int, timeout_extra: int = 300, status_callback=None) -> Optional[dict]:
+    def wait_for_audio(self, audio_id: str, eta: int, timeout_extra: int = 300) -> Optional[dict]:
         timeout = eta + timeout_extra
         start_time = time.time()
-        last_update = 0
-        update_interval = 10  # Update status every 10 seconds instead of every loop
         
         while time.time() - start_time < timeout:
             try:
-                elapsed = int(time.time() - start_time)
-                
-                # Only update status every 10 seconds to reduce overhead
-                if status_callback and elapsed - last_update >= update_interval:
-                    last_update = elapsed
-                    progress = min(100, int((elapsed / timeout) * 100))
-                    frame = LOADING_FRAMES[elapsed % len(LOADING_FRAMES)]
-                    
-                    # Color progression
-                    if progress < 33:
-                        color = "🔴"
-                        status_text = "Starting up..."
-                    elif progress < 66:
-                        color = "🟡"
-                        status_text = "Processing..."
-                    else:
-                        color = "🟢"
-                        status_text = "Almost done..."
-                    
-                    message = f"{color} **{status_text}**\n{frame} {progress}%"
-                    if asyncio.iscoroutinefunction(status_callback):
-                        asyncio.create_task(status_callback(message))
-                    else:
-                        status_callback(message)
-                
                 data = self.get_audio(audio_id)
                 if data:
                     status = data.get("conversion_status", "")
@@ -521,7 +497,7 @@ class MusicGPTAPI:
                         return None
             except:
                 pass
-            time.sleep(3)  # Check every 3 seconds instead of constantly
+            time.sleep(3)
         return None
 
     def get_download_url(self, audio_id: str) -> Optional[str]:
@@ -542,7 +518,6 @@ class MusicGPTBot:
         self.api = None
         self.temp_mail = None
         self.bot_username = None
-        self.repeat_users = {}
     
     def is_approved(self, user_id):
         user = Database.get_user(user_id)
@@ -559,19 +534,31 @@ class MusicGPTBot:
         return session[0] == 1 if session else False
     
     async def update_status(self, user_id, status):
-        user_status[str(user_id)] = {
-            "status": status,
-            "timestamp": datetime.now().isoformat(),
-            "is_processing": True
-        }
+        """Update user status with thread safety"""
+        async with status_lock:
+            user_status[str(user_id)] = {
+                "status": status,
+                "timestamp": datetime.now().isoformat(),
+                "is_processing": True
+            }
     
     async def clear_status(self, user_id):
-        if str(user_id) in user_status:
-            user_status[str(user_id)]["is_processing"] = False
-            user_status[str(user_id)]["status"] = "Ready"
-        
-        if user_id in processing_users:
-            processing_users.remove(user_id)
+        """Clear user status with thread safety"""
+        async with status_lock:
+            if str(user_id) in user_status:
+                user_status[str(user_id)]["is_processing"] = False
+                user_status[str(user_id)]["status"] = "Ready"
+            
+            if user_id in processing_users:
+                processing_users.remove(user_id)
+    
+    def is_processing(self, user_id):
+        """Check if user is processing"""
+        return user_id in processing_users
+    
+    def is_repeat_enabled(self, user_id):
+        """Check if repeat is enabled for user"""
+        return user_id in repeat_users and repeat_users[user_id]
     
     async def check_channel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_chat.type == ChatType.PRIVATE:
@@ -603,7 +590,7 @@ class MusicGPTBot:
         if not Database.get_user(user.id):
             Database.create_user(user.id, user.username, user.first_name, user.last_name)
         
-        is_processing = user.id in processing_users
+        is_processing = self.is_processing(user.id)
         
         keyboard = [
             [InlineKeyboardButton("🎵 Generate Music", callback_data="generate")],
@@ -666,15 +653,15 @@ class MusicGPTBot:
             )
             return
         
-        if user_id in self.repeat_users and self.repeat_users[user_id]:
-            self.repeat_users[user_id] = False
+        if user_id in repeat_users and repeat_users[user_id]:
+            repeat_users[user_id] = False
             await query.message.reply_text(
                 f"🔄 **Repeat Loop Disabled**\n\n"
                 f"Your music will no longer auto-repeat.\n\n"
                 f"{DEV_CREDITS}"
             )
         else:
-            self.repeat_users[user_id] = True
+            repeat_users[user_id] = True
             await query.message.reply_text(
                 f"🔄 **Repeat Loop Enabled**\n\n"
                 f"Your generated music will auto-repeat!\n"
@@ -693,8 +680,8 @@ class MusicGPTBot:
         user_id = update.effective_user.id
         
         status_data = user_status.get(str(user_id), {})
-        is_processing = user_id in processing_users
-        is_repeat = user_id in self.repeat_users and self.repeat_users[user_id]
+        is_processing = self.is_processing(user_id)
+        is_repeat = self.is_repeat_enabled(user_id)
         
         status_text = "📊 **Live Status**\n\n"
         
@@ -748,8 +735,8 @@ class MusicGPTBot:
             repeat_count = 0
             for uid, user_data in users.items():
                 uid_int = int(uid)
-                is_processing = uid_int in processing_users
-                is_repeat = uid_int in self.repeat_users and self.repeat_users[uid_int]
+                is_processing = self.is_processing(uid_int)
+                is_repeat = self.is_repeat_enabled(uid_int)
                 
                 if is_processing:
                     active_count += 1
@@ -788,7 +775,7 @@ class MusicGPTBot:
         await query.answer()
         user_id = update.effective_user.id
         
-        if user_id in processing_users:
+        if self.is_processing(user_id):
             await query.message.reply_text("⏳ You have a process running. Please wait.")
             return
         
@@ -796,7 +783,9 @@ class MusicGPTBot:
             await query.message.reply_text("❌ You need to be approved first. Use /start")
             return
         
-        processing_users.add(user_id)
+        async with status_lock:
+            processing_users.add(user_id)
+        
         await self.update_status(user_id, "Creating temporary email...")
         
         status_msg = await query.message.reply_text("🔄 **Creating temporary email...**\n\n⏳ Please wait...", parse_mode='Markdown')
@@ -820,11 +809,9 @@ class MusicGPTBot:
                 return
             
             await self.update_status(user_id, "Waiting for OTP...")
+            await status_msg.edit_text(f"📧 **Waiting for OTP...**\n\nCheck your email: `{email_data['email']}`\n\n⏳ This may take up to 2 minutes...", parse_mode='Markdown')
             
-            async def update_otp_status(message):
-                await status_msg.edit_text(f"📧 **Waiting for OTP...**\n\nCheck your email: `{email_data['email']}`\n\n{message}\n\n⏳ This may take up to 2 minutes...", parse_mode='Markdown')
-            
-            otp = self.temp_mail.wait_for_otp(timeout=180, status_callback=update_otp_status)
+            otp = self.temp_mail.wait_for_otp(timeout=180)
             
             if not otp:
                 await self.clear_status(user_id)
@@ -898,7 +885,7 @@ class MusicGPTBot:
         await query.answer()
         user_id = update.effective_user.id
         
-        if user_id in processing_users:
+        if self.is_processing(user_id):
             await query.message.reply_text("⏳ You have a process running. Please wait.")
             return
         
@@ -955,14 +942,16 @@ class MusicGPTBot:
     async def process_generation(self, update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str):
         user_id = update.effective_user.id
         
-        if user_id in processing_users:
+        if self.is_processing(user_id):
             await update.message.reply_text("⏳ You have a process running. Please wait.")
             return
         
-        processing_users.add(user_id)
+        async with status_lock:
+            processing_users.add(user_id)
+        
         await self.update_status(user_id, f"Generating: {prompt[:30]}...")
         
-        # Initial status with red color
+        # Initial status
         status_msg = await update.message.reply_text(
             f"🎵 **Generating music...**\n\n"
             f"Prompt: `{prompt}`\n\n"
@@ -997,7 +986,7 @@ class MusicGPTBot:
             
             eta = result['eta']
             
-            # Initial color change to yellow (processing)
+            # Update to yellow (processing)
             await status_msg.edit_text(
                 f"🎵 **Generating music...**\n\n"
                 f"Prompt: `{prompt}`\n\n"
@@ -1005,33 +994,15 @@ class MusicGPTBot:
                 parse_mode='Markdown'
             )
             
-            # Track generation count for loading animation
-            frame_idx = 0
-            last_update = 0
-            update_interval = 10  # Update every 10 seconds
-            
-            async def update_gen_status(message):
-                nonlocal frame_idx, last_update
-                current_time = time.time()
-                # Only update if enough time has passed
-                if current_time - last_update >= update_interval:
-                    last_update = current_time
-                    frame_idx = (frame_idx + 1) % len(LOADING_FRAMES)
-                    await status_msg.edit_text(
-                        f"🎵 **Generating music...**\n\n"
-                        f"Prompt: `{prompt}`\n\n"
-                        f"{message}\n\n"
-                        f"⏳ Estimated time: {eta}s",
-                        parse_mode='Markdown'
-                    )
-            
             await self.update_status(user_id, "Generating audio...")
-            await update_gen_status("🟡 Creating your music...")
             
-            audio_data = self.api.wait_for_audio(
+            # Run the blocking audio generation in a separate thread
+            loop = asyncio.get_event_loop()
+            audio_data = await loop.run_in_executor(
+                None, 
+                self.api.wait_for_audio,
                 result["conversion_id"], 
-                eta, 
-                status_callback=update_gen_status
+                eta
             )
             
             if not audio_data:
@@ -1039,7 +1010,7 @@ class MusicGPTBot:
                 await status_msg.edit_text("❌ Generation timed out. Please try again.")
                 return
             
-            # Change to green (almost done)
+            # Update to green (almost done)
             await status_msg.edit_text(
                 f"🎵 **Generating music...**\n\n"
                 f"Prompt: `{prompt}`\n\n"
@@ -1070,13 +1041,20 @@ class MusicGPTBot:
             
             filepath = os.path.join("output", filename)
             
-            resp = requests.get(download_url, stream=True, timeout=120)
-            if resp.status_code == 200:
-                with open(filepath, "wb") as f:
-                    for chunk in resp.iter_content(8192):
-                        if chunk:
-                            f.write(chunk)
-                
+            # Download in a separate thread to not block
+            def download_audio():
+                resp = requests.get(download_url, stream=True, timeout=120)
+                if resp.status_code == 200:
+                    with open(filepath, "wb") as f:
+                        for chunk in resp.iter_content(8192):
+                            if chunk:
+                                f.write(chunk)
+                    return True
+                return False
+            
+            download_success = await loop.run_in_executor(None, download_audio)
+            
+            if download_success:
                 Database.add_generation(user_id, prompt, audio_id, title, filepath)
                 Database.update_last_audio(user_id, audio_id, title, filepath)
                 
@@ -1105,7 +1083,7 @@ class MusicGPTBot:
                     [InlineKeyboardButton("📊 My Status", callback_data="status")]
                 ]
                 
-                is_repeat = user_id in self.repeat_users and self.repeat_users[user_id]
+                is_repeat = self.is_repeat_enabled(user_id)
                 repeat_status = "🔄 **Repeat Loop: Enabled**" if is_repeat else "🔄 **Repeat Loop: Disabled**"
                 
                 await status_msg.edit_text(
@@ -1127,6 +1105,7 @@ class MusicGPTBot:
                 await status_msg.edit_text("❌ Download failed. Please try again.")
                 
         except Exception as e:
+            logger.error(f"Generation error for user {user_id}: {e}")
             await self.clear_status(user_id)
             await status_msg.edit_text(f"❌ Failed to generate music. Please try again.")
     
@@ -1226,9 +1205,9 @@ class MusicGPTBot:
         display = session[2] or "Not set"
         provider = session[3] or "Not set"
         
-        is_processing = user_id in processing_users
+        is_processing = self.is_processing(user_id)
         status_data = user_status.get(str(user_id), {})
-        is_repeat = user_id in self.repeat_users and self.repeat_users[user_id]
+        is_repeat = self.is_repeat_enabled(user_id)
         
         keyboard = []
         if authenticated:
@@ -1281,7 +1260,7 @@ class MusicGPTBot:
         admin = self.is_admin(user_id)
         authenticated = self.is_authenticated(user_id)
         monthly = Database.get_generation_count(user_id)
-        is_repeat = user_id in self.repeat_users and self.repeat_users[user_id]
+        is_repeat = self.is_repeat_enabled(user_id)
         
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back")]]
         
@@ -1505,6 +1484,8 @@ class MusicGPTBot:
         
         if "Conflict" in str(error) and "getUpdates" in str(error):
             return
+        
+        logger.error(f"Error: {error}")
         
         if update and update.effective_message:
             try:
