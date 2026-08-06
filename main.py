@@ -11,6 +11,16 @@ from datetime import datetime, timedelta
 from typing import Optional
 from functools import wraps
 import sys
+import threading
+
+# Add Flask for health check server
+try:
+    from flask import Flask
+    FLASK_AVAILABLE = True
+except ImportError:
+    FLASK_AVAILABLE = False
+    print("Installing Flask for health checks...")
+    os.system("pip install flask")
 
 try:
     import uuid
@@ -40,13 +50,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration - Use environment variables for security
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8902605528:AAE2qAoiN3bnClx0nl6Zxw6S753KbyzPdP4")
-ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_IDS", "604500512").split(",") if id.strip()]
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8330163722:AAEv9Sj0EMT8cpRu9dtfsfVN7JSB0J9n_7A")
+ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_IDS", "7716750398").split(",") if id.strip()]
 DB_FILE = "musicgpt_bot.json"
 DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
 MAX_RETRIES = 3
 RETRY_DELAY = 5
 REQUEST_TIMEOUT = 30
+PORT = int(os.environ.get("PORT", 8080))  # Render provides PORT env variable
 
 # Create required directories
 os.makedirs("output", exist_ok=True)
@@ -1359,10 +1370,41 @@ class MusicGPTBot:
             except:
                 pass
 
+# Health check server for Render
+def run_health_server():
+    """Run a simple HTTP server for Render health checks"""
+    try:
+        from flask import Flask, jsonify
+        
+        health_app = Flask(__name__)
+        
+        @health_app.route('/')
+        @health_app.route('/health')
+        def health():
+            return jsonify({
+                "status": "healthy",
+                "timestamp": datetime.now().isoformat(),
+                "service": "MusicGPT Telegram Bot"
+            }), 200
+        
+        @health_app.route('/ping')
+        def ping():
+            return "pong", 200
+        
+        # Run the health server
+        health_app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
+    except Exception as e:
+        logger.error(f"Health server error: {e}")
+
 def main():
     if not TELEGRAM_AVAILABLE:
         print("Install: pip install python-telegram-bot")
         return
+    
+    # Start health check server in a separate thread
+    health_thread = threading.Thread(target=run_health_server, daemon=True)
+    health_thread.start()
+    logger.info(f"Health check server started on port {PORT}")
     
     # Add a small delay to ensure cleanup of previous instances
     time.sleep(2)
@@ -1383,6 +1425,7 @@ def main():
     
     print("✅ Bot started!")
     print(f"👑 Admin ID: {ADMIN_IDS[0] if ADMIN_IDS else 'Not set'}")
+    print(f"🌐 Health check server running on port {PORT}")
     print("📋 Inline buttons only - no commands needed!")
     print("🎵 MusicGPT integration ready!")
     print("\n🔒 Channel Protection:")
