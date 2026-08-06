@@ -60,6 +60,9 @@ os.makedirs("output", exist_ok=True)
 user_status = {}
 processing_users = set()
 
+# Loading animation frames - simplified
+LOADING_FRAMES = ["◐", "◓", "◑", "◒"]
+
 def load_db():
     if os.path.exists(DB_FILE):
         try:
@@ -479,17 +482,35 @@ class MusicGPTAPI:
     def wait_for_audio(self, audio_id: str, eta: int, timeout_extra: int = 300, status_callback=None) -> Optional[dict]:
         timeout = eta + timeout_extra
         start_time = time.time()
-        elapsed = 0
+        last_update = 0
+        update_interval = 10  # Update status every 10 seconds instead of every loop
         
         while time.time() - start_time < timeout:
             try:
                 elapsed = int(time.time() - start_time)
-                if status_callback:
+                
+                # Only update status every 10 seconds to reduce overhead
+                if status_callback and elapsed - last_update >= update_interval:
+                    last_update = elapsed
                     progress = min(100, int((elapsed / timeout) * 100))
-                    if asyncio.iscoroutinefunction(status_callback):
-                        asyncio.create_task(status_callback(f"🎵 Generating... {progress}%\n⏳ {elapsed}s / {timeout}s"))
+                    frame = LOADING_FRAMES[elapsed % len(LOADING_FRAMES)]
+                    
+                    # Color progression
+                    if progress < 33:
+                        color = "🔴"
+                        status_text = "Starting up..."
+                    elif progress < 66:
+                        color = "🟡"
+                        status_text = "Processing..."
                     else:
-                        status_callback(f"🎵 Generating... {progress}%\n⏳ {elapsed}s / {timeout}s")
+                        color = "🟢"
+                        status_text = "Almost done..."
+                    
+                    message = f"{color} **{status_text}**\n{frame} {progress}%"
+                    if asyncio.iscoroutinefunction(status_callback):
+                        asyncio.create_task(status_callback(message))
+                    else:
+                        status_callback(message)
                 
                 data = self.get_audio(audio_id)
                 if data:
@@ -500,7 +521,7 @@ class MusicGPTAPI:
                         return None
             except:
                 pass
-            time.sleep(3)
+            time.sleep(3)  # Check every 3 seconds instead of constantly
         return None
 
     def get_download_url(self, audio_id: str) -> Optional[str]:
@@ -521,6 +542,7 @@ class MusicGPTBot:
         self.api = None
         self.temp_mail = None
         self.bot_username = None
+        self.repeat_users = {}
     
     def is_approved(self, user_id):
         user = Database.get_user(user_id)
@@ -584,8 +606,8 @@ class MusicGPTBot:
         is_processing = user.id in processing_users
         
         keyboard = [
-            [InlineKeyboardButton("🔑 Login", callback_data="login")],
             [InlineKeyboardButton("🎵 Generate Music", callback_data="generate")],
+            [InlineKeyboardButton("🔄 Repeat Loop", callback_data="repeat_loop")],
             [InlineKeyboardButton("▶️ Play Last Track", callback_data="play")],
             [InlineKeyboardButton("📊 My Status", callback_data="status")],
             [InlineKeyboardButton("👤 My Profile", callback_data="profile")],
@@ -594,7 +616,7 @@ class MusicGPTBot:
         
         if self.is_admin(user.id):
             keyboard.append([InlineKeyboardButton("👑 Admin Panel", callback_data="admin_panel")])
-            keyboard.append([InlineKeyboardButton("👥 All Users Status", callback_data="all_users_status")])
+            keyboard.append([InlineKeyboardButton("👥 All Users", callback_data="all_users_status")])
         
         if not self.is_approved(user.id):
             keyboard = [
@@ -609,17 +631,58 @@ class MusicGPTBot:
         if self.is_approved(user.id):
             if self.is_authenticated(user.id):
                 welcome += "✅ You are **authenticated** and ready to generate music!\n\n"
-                welcome += "Just click **'Generate Music'** and tell me what you want!"
+                welcome += "Click **🎵 Generate Music** and tell me what you want!"
             else:
                 welcome += "🔑 You are **approved** but need to login first.\n\n"
-                welcome += "Click **'Login'** to authenticate with MusicGPT."
+                welcome += "Click **🔑 Login** to authenticate with MusicGPT."
         else:
             welcome += "⏳ You need **approval** to use this bot.\n\n"
-            welcome += "Click **'Request Access'** to ask for permission."
+            welcome += "Click **🔑 Request Access** to ask for permission."
         
         welcome += f"\n\n{DEV_CREDITS}"
         
         await update.message.reply_text(welcome, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    
+    async def repeat_loop_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.check_channel(update, context):
+            return
+        
+        query = update.callback_query
+        await query.answer()
+        user_id = update.effective_user.id
+        
+        if not self.is_approved(user_id):
+            await query.message.reply_text("❌ Access denied. Request approval first.")
+            return
+        
+        if not self.is_authenticated(user_id):
+            keyboard = [[InlineKeyboardButton("🔑 Login", callback_data="login")]]
+            await query.message.reply_text(
+                "❌ **Not Authenticated**\n\n"
+                "You need to login first before using repeat loop.\n\n"
+                f"{DEV_CREDITS}",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+            return
+        
+        if user_id in self.repeat_users and self.repeat_users[user_id]:
+            self.repeat_users[user_id] = False
+            await query.message.reply_text(
+                f"🔄 **Repeat Loop Disabled**\n\n"
+                f"Your music will no longer auto-repeat.\n\n"
+                f"{DEV_CREDITS}"
+            )
+        else:
+            self.repeat_users[user_id] = True
+            await query.message.reply_text(
+                f"🔄 **Repeat Loop Enabled**\n\n"
+                f"Your generated music will auto-repeat!\n"
+                f"Click **🎵 Generate Music** to start.\n\n"
+                f"{DEV_CREDITS}"
+            )
+        
+        await self.start(update, context)
     
     async def live_status_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await self.check_channel(update, context):
@@ -631,6 +694,7 @@ class MusicGPTBot:
         
         status_data = user_status.get(str(user_id), {})
         is_processing = user_id in processing_users
+        is_repeat = user_id in self.repeat_users and self.repeat_users[user_id]
         
         status_text = "📊 **Live Status**\n\n"
         
@@ -646,10 +710,14 @@ class MusicGPTBot:
                 status_text += f"Last activity: {status_data.get('status', 'None')}\n"
                 status_text += f"Time: {status_data.get('timestamp', 'Unknown')}"
         
+        status_text += f"\n\n🔄 Repeat Loop: {'✅ Enabled' if is_repeat else '❌ Disabled'}"
         status_text += f"\n\n{DEV_CREDITS}"
         
-        keyboard = [[InlineKeyboardButton("🔄 Refresh", callback_data="live_status")],
-                   [InlineKeyboardButton("🔙 Back", callback_data="back")]]
+        keyboard = [
+            [InlineKeyboardButton("🔄 Refresh", callback_data="live_status")],
+            [InlineKeyboardButton("🔄 Toggle Repeat", callback_data="repeat_loop")],
+            [InlineKeyboardButton("🔙 Back", callback_data="back")]
+        ]
         
         await query.message.reply_text(
             status_text,
@@ -677,25 +745,34 @@ class MusicGPTBot:
             status_text += "No users registered yet."
         else:
             active_count = 0
+            repeat_count = 0
             for uid, user_data in users.items():
-                is_processing = int(uid) in processing_users
+                uid_int = int(uid)
+                is_processing = uid_int in processing_users
+                is_repeat = uid_int in self.repeat_users and self.repeat_users[uid_int]
+                
                 if is_processing:
                     active_count += 1
                     status = user_status.get(uid, {})
                     status_text += f"🔄 **@{user_data.get('username', 'Unknown')}**\n"
                     status_text += f"Status: {status.get('status', 'Processing...')}\n"
-                    status_text += f"Started: {status.get('timestamp', 'Just now')}\n\n"
+                    status_text += f"Repeat: {'✅' if is_repeat else '❌'}\n\n"
+                elif is_repeat:
+                    repeat_count += 1
             
             if active_count == 0:
                 status_text += "✅ No users currently processing.\n\n"
             
             status_text += f"Total users: {len(users)}\n"
-            status_text += f"Currently active: {active_count}"
+            status_text += f"Currently active: {active_count}\n"
+            status_text += f"Repeat mode: {repeat_count}"
         
         status_text += f"\n\n{DEV_CREDITS}"
         
-        keyboard = [[InlineKeyboardButton("🔄 Refresh", callback_data="all_users_status")],
-                   [InlineKeyboardButton("🔙 Back", callback_data="admin_panel")]]
+        keyboard = [
+            [InlineKeyboardButton("🔄 Refresh", callback_data="all_users_status")],
+            [InlineKeyboardButton("🔙 Back", callback_data="admin_panel")]
+        ]
         
         await query.message.reply_text(
             status_text,
@@ -780,6 +857,7 @@ class MusicGPTBot:
             
             keyboard = [
                 [InlineKeyboardButton("🎵 Generate Music", callback_data="generate")],
+                [InlineKeyboardButton("🔄 Repeat Loop", callback_data="repeat_loop")],
                 [InlineKeyboardButton("📊 My Status", callback_data="status")],
                 [InlineKeyboardButton("🔙 Back", callback_data="back")]
             ]
@@ -788,7 +866,7 @@ class MusicGPTBot:
             success_text += f"Display: `{display_name}`\n"
             success_text += f"Email: `{email_data['email']}`\n"
             success_text += f"Provider: `temp-mail.org`\n\n"
-            success_text += f"🎵 Click **'Generate Music'** to start creating!\n\n"
+            success_text += f"🎵 Click **🎵 Generate Music** to start creating!\n\n"
             success_text += DEV_CREDITS
             
             await status_msg.edit_text(
@@ -829,7 +907,7 @@ class MusicGPTBot:
             return
         
         if not self.is_authenticated(user_id):
-            keyboard = [[InlineKeyboardButton("🔑 Login First", callback_data="login")]]
+            keyboard = [[InlineKeyboardButton("🔑 Login", callback_data="login")]]
             await query.message.reply_text(
                 "❌ **Not Authenticated**\n\n"
                 "You need to login first before generating music.\n\n"
@@ -846,6 +924,7 @@ class MusicGPTBot:
             "• `Epic orchestral music with dramatic violins`\n"
             "• `Chill lofi beats for studying`\n"
             "• `Electronic dance music with heavy bass`\n\n"
+            "💡 Tip: Enable **🔄 Repeat Loop** for auto-repeat!\n\n"
             f"✏️ Type your prompt now:\n\n{DEV_CREDITS}"
         )
         context.user_data['awaiting_prompt'] = True
@@ -864,6 +943,7 @@ class MusicGPTBot:
         
         keyboard = [
             [InlineKeyboardButton("🎵 Generate Music", callback_data="generate")],
+            [InlineKeyboardButton("🔄 Repeat Loop", callback_data="repeat_loop")],
             [InlineKeyboardButton("📊 My Status", callback_data="status")],
             [InlineKeyboardButton("🔙 Back", callback_data="back")]
         ]
@@ -882,10 +962,11 @@ class MusicGPTBot:
         processing_users.add(user_id)
         await self.update_status(user_id, f"Generating: {prompt[:30]}...")
         
+        # Initial status with red color
         status_msg = await update.message.reply_text(
             f"🎵 **Generating music...**\n\n"
             f"Prompt: `{prompt}`\n\n"
-            f"🔄 Initializing...",
+            f"🔴 Starting up...\n{LOADING_FRAMES[0]} Initializing...",
             parse_mode='Markdown'
         )
         
@@ -899,11 +980,15 @@ class MusicGPTBot:
             self.api = MusicGPTAPI(session[4])
             
             await self.update_status(user_id, "Submitting prompt...")
-            await status_msg.edit_text(f"🎵 **Submitting prompt...**\n\nPrompt: `{prompt}`", parse_mode='Markdown')
+            await status_msg.edit_text(
+                f"🎵 **Generating music...**\n\n"
+                f"Prompt: `{prompt}`\n\n"
+                f"🔴 Submitting request...",
+                parse_mode='Markdown'
+            )
             
             result = self.api.submit_prompt(prompt)
             
-            # Check if generation failed
             if not result.get("success"):
                 error_msg = result.get("error", "Unknown error")
                 await self.clear_status(user_id)
@@ -912,17 +997,36 @@ class MusicGPTBot:
             
             eta = result['eta']
             
+            # Initial color change to yellow (processing)
+            await status_msg.edit_text(
+                f"🎵 **Generating music...**\n\n"
+                f"Prompt: `{prompt}`\n\n"
+                f"🟡 Processing...\n⏳ Estimated time: {eta}s",
+                parse_mode='Markdown'
+            )
+            
+            # Track generation count for loading animation
+            frame_idx = 0
+            last_update = 0
+            update_interval = 10  # Update every 10 seconds
+            
             async def update_gen_status(message):
-                await status_msg.edit_text(
-                    f"🎵 **Generating music...**\n\n"
-                    f"Prompt: `{prompt}`\n\n"
-                    f"{message}\n\n"
-                    f"⏳ Estimated time: {eta}s",
-                    parse_mode='Markdown'
-                )
+                nonlocal frame_idx, last_update
+                current_time = time.time()
+                # Only update if enough time has passed
+                if current_time - last_update >= update_interval:
+                    last_update = current_time
+                    frame_idx = (frame_idx + 1) % len(LOADING_FRAMES)
+                    await status_msg.edit_text(
+                        f"🎵 **Generating music...**\n\n"
+                        f"Prompt: `{prompt}`\n\n"
+                        f"{message}\n\n"
+                        f"⏳ Estimated time: {eta}s",
+                        parse_mode='Markdown'
+                    )
             
             await self.update_status(user_id, "Generating audio...")
-            await update_gen_status("🎵 Creating your music...")
+            await update_gen_status("🟡 Creating your music...")
             
             audio_data = self.api.wait_for_audio(
                 result["conversion_id"], 
@@ -935,6 +1039,14 @@ class MusicGPTBot:
                 await status_msg.edit_text("❌ Generation timed out. Please try again.")
                 return
             
+            # Change to green (almost done)
+            await status_msg.edit_text(
+                f"🎵 **Generating music...**\n\n"
+                f"Prompt: `{prompt}`\n\n"
+                f"🟢 Almost done!\n⏳ Finalizing...",
+                parse_mode='Markdown'
+            )
+            
             await self.update_status(user_id, "Getting download URL...")
             audio_id = audio_data.get("id", result["conversion_id"])
             download_url = self.api.get_download_url(audio_id)
@@ -945,7 +1057,11 @@ class MusicGPTBot:
                 return
             
             await self.update_status(user_id, "Downloading audio...")
-            await status_msg.edit_text(f"📥 **Downloading audio...**\n\n⏳ Please wait...", parse_mode='Markdown')
+            await status_msg.edit_text(
+                f"📥 **Downloading audio...**\n\n"
+                f"🟢 Finalizing...\n{LOADING_FRAMES[2]} Please wait...",
+                parse_mode='Markdown'
+            )
             
             title = audio_data.get("title", "music")
             safe_title = re.sub(r'[^\w\-_\. ]', '_', title)
@@ -965,7 +1081,11 @@ class MusicGPTBot:
                 Database.update_last_audio(user_id, audio_id, title, filepath)
                 
                 await self.update_status(user_id, "Sending audio...")
-                await status_msg.edit_text(f"📤 **Sending your music...**", parse_mode='Markdown')
+                await status_msg.edit_text(
+                    f"📤 **Sending your music...**\n\n"
+                    f"✅ Complete!",
+                    parse_mode='Markdown'
+                )
                 
                 with open(filepath, "rb") as f:
                     await context.bot.send_audio(
@@ -981,16 +1101,27 @@ class MusicGPTBot:
                 keyboard = [
                     [InlineKeyboardButton("▶️ Play Again", callback_data="play")],
                     [InlineKeyboardButton("🎵 Generate More", callback_data="generate")],
+                    [InlineKeyboardButton("🔄 Repeat Loop", callback_data="repeat_loop")],
                     [InlineKeyboardButton("📊 My Status", callback_data="status")]
                 ]
+                
+                is_repeat = user_id in self.repeat_users and self.repeat_users[user_id]
+                repeat_status = "🔄 **Repeat Loop: Enabled**" if is_repeat else "🔄 **Repeat Loop: Disabled**"
+                
                 await status_msg.edit_text(
                     f"✅ **Generation Complete!**\n\n"
                     f"Title: `{title}`\n"
-                    f"Duration: {audio_data.get('audio_length_ms', 0) / 1000:.1f}s\n\n"
+                    f"Duration: {audio_data.get('audio_length_ms', 0) / 1000:.1f}s\n"
+                    f"{repeat_status}\n\n"
                     f"What would you like to do next?\n\n{DEV_CREDITS}",
                     reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode='Markdown'
                 )
+                
+                if is_repeat:
+                    await asyncio.sleep(2)
+                    await self.process_generation(update, context, prompt)
+                
             else:
                 await self.clear_status(user_id)
                 await status_msg.edit_text("❌ Download failed. Please try again.")
@@ -1097,12 +1228,14 @@ class MusicGPTBot:
         
         is_processing = user_id in processing_users
         status_data = user_status.get(str(user_id), {})
+        is_repeat = user_id in self.repeat_users and self.repeat_users[user_id]
         
         keyboard = []
         if authenticated:
             keyboard.append([InlineKeyboardButton("🎵 Generate Music", callback_data="generate")])
         else:
             keyboard.append([InlineKeyboardButton("🔑 Login", callback_data="login")])
+        keyboard.append([InlineKeyboardButton("🔄 Toggle Repeat", callback_data="repeat_loop")])
         keyboard.append([InlineKeyboardButton("📈 Live Status", callback_data="live_status")])
         keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="back")])
         
@@ -1113,6 +1246,7 @@ class MusicGPTBot:
             status_text += f"Email: `{email}`\n"
             status_text += f"Provider: `{provider}`\n"
         status_text += f"User ID: `{user_id}`\n\n"
+        status_text += f"🔄 Repeat Loop: {'✅ Enabled' if is_repeat else '❌ Disabled'}\n\n"
         
         if is_processing:
             status_text += "🔄 **Currently Processing**\n"
@@ -1147,6 +1281,7 @@ class MusicGPTBot:
         admin = self.is_admin(user_id)
         authenticated = self.is_authenticated(user_id)
         monthly = Database.get_generation_count(user_id)
+        is_repeat = user_id in self.repeat_users and self.repeat_users[user_id]
         
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back")]]
         
@@ -1155,7 +1290,8 @@ class MusicGPTBot:
         profile_text += f"Admin: {'✅' if admin else '❌'}\n"
         profile_text += f"Approved: {'✅' if approved else '❌'}\n"
         profile_text += f"Authenticated: {'✅' if authenticated else '❌'}\n"
-        profile_text += f"Generations: {monthly}/month\n\n"
+        profile_text += f"Generations: {monthly}/month\n"
+        profile_text += f"Repeat Loop: {'✅ Enabled' if is_repeat else '❌ Disabled'}\n\n"
         
         if authenticated:
             profile_text += "🎵 Ready to generate!"
@@ -1305,6 +1441,8 @@ class MusicGPTBot:
             await self.login_callback(update, context)
         elif data == "generate":
             await self.generate_callback(update, context)
+        elif data == "repeat_loop":
+            await self.repeat_loop_callback(update, context)
         elif data == "play":
             await self.play_callback(update, context)
         elif data == "status":
@@ -1424,6 +1562,7 @@ def main():
     print(f"👑 Admin ID: {ADMIN_IDS[0] if ADMIN_IDS else 'Not set'}")
     print("🎵 MusicGPT integration ready!")
     print("📈 Live status tracking enabled!")
+    print("🔄 Repeat loop enabled!")
     print(f"👨‍💻 Developers: @KeemSGHLL & @poqruette")
     
     try:
