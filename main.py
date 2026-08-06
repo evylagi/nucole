@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8107617495:AAEjCpxJ0qVmG1m7C5rzAU_maM2t9IlnUJs")
-ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_IDS", "604500512").split(",") if id.strip()]
+ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_IDS", "7716750398").split(",") if id.strip()]
 DB_FILE = "musicgpt_bot.json"
 REQUEST_TIMEOUT = 30
 PORT = int(os.environ.get("PORT", 8080))
