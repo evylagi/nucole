@@ -3,14 +3,14 @@ import os
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8107617495:AAEjCpxJ0qVmG1m7C5rzAU_maM2t9IlnUJs")
 FISH_API_KEY = os.environ.get("FISH_API_KEY", "sk-fish-2IfHrnq1IG3lhnGoCFVbiNwRrdoR_yM4OXZEb7KfO_g")
 
-BOT_NAME = "VoiceStudio Pro"
+BOT_NAME = "Bisaya Studio Session 😂"
 DEV_NAME = "J 🧃"
-DEV_ALIAS = "Jews"
+DEV_ALIAS = "Jews / bai holden hiscock"
 MAX_CHARS = 5000
 PORT = int(os.environ.get("PORT", 8080))
 
 VOICES_FILE = "all_voices.json"
-MAX_VOICES = 20
+MAX_VOICES = 999
 
 DEFAULT_VOICES = {
     "studio_pro": {
