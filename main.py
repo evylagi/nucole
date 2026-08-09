@@ -143,11 +143,9 @@ class VoiceBot:
 
     async def show_search_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: str, page: int, query: str):
         """Show search results page with pagination"""
-        # Get cached search results or perform new search
-        if user_id in self.search_results and self.search_results[user_id].get('query') == query:
+        if user_id in self.search_results and self.search_results[user_id] and self.search_results[user_id].get('query') == query:
             results = self.search_results[user_id]['results']
         else:
-            # Search for voices
             results = []
             query_lower = query.lower()
             for key, voice in VOICE_ARTISTS.items():
@@ -155,7 +153,6 @@ class VoiceBot:
                 desc = voice['description'].lower()
                 if query_lower in name or query_lower in desc:
                     results.append((key, voice))
-            # Cache results
             self.search_results[user_id] = {
                 'query': query,
                 'results': results
@@ -188,13 +185,10 @@ class VoiceBot:
         
         keyboard = []
         for key, voice in results[start_idx:end_idx]:
-            button_text = f"{voice['emoji']} {voice['name']}"
             keyboard.append([InlineKeyboardButton(
-                button_text,
+                f"{voice['emoji']} {voice['name']}",
                 callback_data=f"search_select_{key}"
             )])
-            # Add description as a second line (just for display, not clickable)
-            # We'll show it in the message text instead
         
         nav_row = []
         if page > 0:
@@ -204,12 +198,10 @@ class VoiceBot:
         if nav_row:
             keyboard.append(nav_row)
         
-        # Add back to voice button
         keyboard.append([InlineKeyboardButton("🎤 Back to All Voices", callback_data="search_back_to_voice")])
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Build message
         text = f"🔍 *Search Results for \"{query}\"*\n\n"
         text += f"Found {len(results)} voices matching \"{query}\":\n"
         text += f"Page {page + 1}/{total_pages}\n\n"
@@ -233,10 +225,7 @@ class VoiceBot:
             )
 
     async def search_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Search for voices by name or description"""
         user_id = str(update.effective_user.id)
-        
-        # Get search query from command
         query = ' '.join(context.args) if context.args else ''
         
         if not query:
@@ -252,7 +241,6 @@ class VoiceBot:
             )
             return
         
-        # Clear old search cache and show results
         self.search_results[user_id] = None
         await self.show_search_page(update, context, user_id, 0, query)
 
@@ -506,7 +494,6 @@ Made with ❤️ by {DEV_NAME}
         elif data == "search_page_next":
             current_page = self.search_pages.get(user_id, 0)
             new_page = current_page + 1
-            # Get the search query from cache
             if user_id in self.search_results and self.search_results[user_id]:
                 query = self.search_results[user_id]['query']
                 await self.show_search_page(update, context, user_id, new_page, query)
@@ -529,7 +516,6 @@ Made with ❤️ by {DEV_NAME}
                 )
 
         elif data == "search_back_to_voice":
-            # Go back to main voice browser
             page = self.voice_pages.get(user_id, 0)
             await self.show_voice_page(update, context, user_id, page)
 
@@ -615,8 +601,12 @@ Made with ❤️ by {DEV_NAME}
 
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error: {context.error}")
-        if update and update.effective_message:
-            await update.message.reply_text("⚠️ Service unavailable. Please try again.")
+        # Only try to reply if update has a message or callback_query
+        if update:
+            if update.effective_message:
+                await update.effective_message.reply_text("⚠️ Service unavailable. Please try again.")
+            elif update.callback_query:
+                await update.callback_query.edit_message_text("⚠️ Service unavailable. Please try again.")
 
 def run_bot():
     bot = VoiceBot()
