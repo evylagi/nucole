@@ -32,7 +32,7 @@ def health_check():
 def health():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}, 200
 
-# ========== VOICE ARTISTS ==========
+# ========== VOICE ARTISTS (IDs Hidden Internally) ==========
 VOICE_ARTISTS = {
     "studio_pro": {
         "name": "Studio Pro",
@@ -93,7 +93,7 @@ LANGUAGES = {
     "xh": "🇿🇦 Xhosa", "zh": "🇨🇳 Chinese", "zu": "🇿🇦 Zulu"
 }
 
-# ========== EMOTION TAGS FOR FISH.AUDIO ==========
+# ========== EMOTION TAGS ==========
 EMOTIONS = {
     "happy": "[happy]",
     "sad": "[sad]",
@@ -116,17 +116,8 @@ logger = logging.getLogger(__name__)
 
 # ========== VOICE SERVICE ==========
 def generate_voice(text, reference_id):
-    """Generate voice with emotion support"""
+    """Generate voice with reference ID - supports 83 languages automatically"""
     try:
-        # Check for emotion tags in text
-        emotion_processed = False
-        for emotion_name, emotion_tag in EMOTIONS.items():
-            if emotion_tag in text.lower():
-                # Fish.audio supports emotion tags in the text
-                # The model will interpret [happy], [sad], etc.
-                emotion_processed = True
-                break
-        
         response = requests.post(
             "https://api.fish.audio/v1/tts",
             headers={
@@ -135,7 +126,7 @@ def generate_voice(text, reference_id):
                 "model": "s2.1-pro-free",
             },
             json={
-                "text": text,  # Keep emotion tags in text
+                "text": text,
                 "reference_id": reference_id,
                 "format": "mp3",
             },
@@ -157,15 +148,16 @@ def generate_voice(text, reference_id):
 # ========== BOT HANDLERS ==========
 class VoiceBot:
     def __init__(self):
-        self.user_languages = {}  # Store user language preferences
-        self.user_voices = {}  # Store user voice preferences
+        self.user_voices = {}
         self.start_time = datetime.now()
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         welcome_text = f"""
 🎙️ *Welcome to {BOT_NAME}*
 
-🌍 83 languages • 🎤 4 premium voices • 😊 Emotion support
+🌍 Supports 83 languages automatically!
+🎤 4 premium voice artists
+😊 10 emotion tags
 
 *Voice Artists:*
 🎙️ Studio Pro - Studio quality
@@ -173,39 +165,29 @@ class VoiceBot:
 🧘 Deep Dave - Meditative calm
 🌊 Calm Voice - Soft & soothing
 
-*Emotion Tags (add to your text):*
-• [happy] 😊 - Cheerful tone
-• [sad] 😢 - Melancholic tone
-• [angry] 😠 - Intense tone
-• [excited] 🤩 - Energetic tone
-• [calm] 😌 - Relaxed tone
-• [laughing] 😂 - Laughing while speaking
-• [whispering] 🤫 - Whispered voice
-• [serious] 😐 - Professional tone
-• [friendly] 🤗 - Warm, inviting tone
-• [neutral] 😐 - Balanced tone
+*Emotion Tags:*
+[happy] 😊 [sad] 😢 [angry] 😠 [excited] 🤩
+[calm] 😌 [laughing] 😂 [whispering] 🤫
+[serious] 😐 [friendly] 🤗 [neutral] 😐
 
 *Commands:*
 /voice - Change voice artist
-/language - Change language
 /emotions - Show emotion tags
 /sample - Hear a demo
 /about - Bot info
 
-*Example:* Send text like:
-"[happy] Hello! This is a happy message."
+*Just send text in any of 83 languages!*
 
 ---
-✨ *Developer:* {DEV_NAME} a.k.a {DEV_ALIAS}
+✨ *Developer:* {DEV_NAME}
         """
         await update.message.reply_text(welcome_text, parse_mode='Markdown')
     
     async def emotions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Show available emotion tags"""
         emotions_text = """
 😊 *Emotion Tags Guide*
 
-Add these tags to your text for emotional voice:
+Add these tags to your text:
 
 • `[happy]` - Cheerful, joyful tone
 • `[sad]` - Melancholic, emotional tone
@@ -218,12 +200,8 @@ Add these tags to your text for emotional voice:
 • `[friendly]` - Warm, inviting tone
 • `[neutral]` - Balanced, natural tone
 
-*How to use:*
-Put the tag at the start of your message:
+*Example:*
 `[happy] Hello! This is a happy message.`
-
-*Multiple tags:*
-`[excited] [laughing] This is exciting!`
 
 ---
 ✨ *Developer:* {DEV_NAME}
@@ -251,89 +229,22 @@ Put the tag at the start of your message:
             reply_markup=reply_markup
         )
     
-    async def language_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Show language selection with pagination"""
-        user_id = str(update.effective_user.id)
-        current_lang = self.user_languages.get(user_id, "en")
-        
-        # Get current page from context or default to 0
-        page = context.user_data.get('lang_page', 0)
-        
-        # Get all language codes sorted
-        lang_codes = sorted(LANGUAGES.keys())
-        items_per_page = 20
-        total_pages = (len(lang_codes) + items_per_page - 1) // items_per_page
-        
-        # Ensure page is within bounds
-        if page < 0:
-            page = 0
-        elif page >= total_pages:
-            page = total_pages - 1
-        
-        # Calculate start and end indices
-        start_idx = page * items_per_page
-        end_idx = min(start_idx + items_per_page, len(lang_codes))
-        
-        # Build keyboard
-        keyboard = []
-        for code in lang_codes[start_idx:end_idx]:
-            if code in LANGUAGES:
-                is_current = " ✅" if code == current_lang else ""
-                keyboard.append([InlineKeyboardButton(
-                    f"{LANGUAGES[code]}{is_current}",
-                    callback_data=f"lang_{code}"
-                )])
-        
-        # Add navigation buttons
-        nav_row = []
-        if page > 0:
-            nav_row.append(InlineKeyboardButton("◀️ Previous", callback_data="lang_page_prev"))
-        if page < total_pages - 1:
-            nav_row.append(InlineKeyboardButton("Next ▶️", callback_data="lang_page_next"))
-        if nav_row:
-            keyboard.append(nav_row)
-        
-        # Add view all button
-        keyboard.append([InlineKeyboardButton("📚 View All Languages", callback_data="view_all_langs")])
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        current_display = LANGUAGES.get(current_lang, "English")
-        
-        await update.message.reply_text(
-            f"🌍 *Select Language*\n\nCurrent: {current_display}\nPage {page + 1}/{total_pages}\n\nChoose from below:",
-            parse_mode='Markdown',
-            reply_markup=reply_markup
-        )
-    
     async def sample_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Send a sample with emotion in user's language"""
         user_id = str(update.effective_user.id)
-        lang = self.user_languages.get(user_id, "en")
         voice_key = self.user_voices.get(user_id, "studio_pro")
-        
-        lang_name = LANGUAGES.get(lang, "English")
         voice = VOICE_ARTISTS[voice_key]
         
-        await update.message.reply_text(f"🎵 Generating sample with {voice['emoji']} {voice['name']} in {lang_name}...")
+        await update.message.reply_text(f"🎵 Generating sample with {voice['emoji']} {voice['name']}...")
         
-        # Sample texts with emotions in different languages
-        sample_texts = {
-            "en": f"[excited] [laughing] Hello! Welcome to {BOT_NAME}! This is the {voice['name']} voice with emotions! [laughing] Thanks to J a.k.a Jews for creating this amazing bot!",
-            "zh": f"[excited] [laughing] 你好！欢迎来到 {BOT_NAME}！这是{voice['name']}的声音，带有情感！[laughing] 感谢 J a.k.a Jews 创建了这个令人惊叹的机器人！",
-            "ja": f"[excited] [laughing] こんにちは！{BOT_NAME}へようこそ！これは{voice['name']}の感情的な声です！[laughing] J a.k.a Jews がこの素晴らしいボットを作成してくれてありがとう！",
-            "es": f"[excited] [laughing] ¡Hola! ¡Bienvenido a {BOT_NAME}! ¡Esta es la voz de {voice['name']} con emociones! [laughing] ¡Gracias a J a.k.a Jews por crear este increíble bot!",
-            "ar": f"[excited] [laughing] مرحباً! مرحباً بك في {BOT_NAME}! هذا هو صوت {voice['name']} مع المشاعر! [laughing] شكراً لـ J a.k.a Jews على إنشاء هذا البوت المذهل!",
-        }
+        sample_text = f"[excited] [laughing] Hello! Welcome to {BOT_NAME}! This is the {voice['name']} voice with emotions! [laughing] Thanks to J for creating this amazing bot! こんにちは！ مرحباً! 你好！"
         
-        sample_text = sample_texts.get(lang, sample_texts["en"])
         audio_file = generate_voice(sample_text, voice['reference_id'])
         
         if audio_file and os.path.exists(audio_file):
             with open(audio_file, 'rb') as audio:
                 await update.message.reply_voice(
                     voice=audio,
-                    caption=f"🎧 *Sample with Emotions*\n{voice['emoji']} {voice['name']} · 🌍 {lang_name}\n😊 [excited] [laughing]\n✨ {DEV_NAME}",
+                    caption=f"🎧 *Sample with Emotions*\n{voice['emoji']} {voice['name']}\n😊 [excited] [laughing]\n✨ {DEV_NAME}",
                     parse_mode='Markdown'
                 )
             os.unlink(audio_file)
@@ -349,28 +260,24 @@ Put the tag at the start of your message:
 ℹ️ *About {BOT_NAME}*
 
 *Version:* 3.0
-*Developer:* {DEV_NAME} a.k.a {DEV_ALIAS}
+*Developer:* {DEV_NAME}
 *Languages:* 83 supported
 *Emotions:* 10 emotion tags
+*Voice Artists:* 4 premium voices
 *Max Characters:* {MAX_CHARS}
 *Uptime:* {hours}h {minutes}m
 
-*Voice Artists:*
-🎙️ Studio Pro - Studio quality
-👨 Dave - Clear, serious male
-🧘 Deep Dave - Meditative calm
-🌊 Calm Voice - Soft & soothing
-
-*Emotion Tags:*
-[happy] [sad] [angry] [excited] [calm]
-[laughing] [whispering] [serious] [friendly] [neutral]
+*Features:*
+• 83 languages auto-detected
+• 4 premium voice artists
+• 10 emotion expressions
+• Studio quality audio
 
 Made with ❤️ by {DEV_NAME}
         """
         await update.message.reply_text(about_text, parse_mode='Markdown')
     
     async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Convert text to voice with language and emotion support"""
         user_id = str(update.effective_user.id)
         text = update.message.text
         
@@ -378,32 +285,23 @@ Made with ❤️ by {DEV_NAME}
             await update.message.reply_text(f"⚠️ Text exceeds {MAX_CHARS} characters.")
             return
         
-        # Get user preferences (language and voice)
-        lang = self.user_languages.get(user_id, "en")
         voice_key = self.user_voices.get(user_id, "studio_pro")
-        
-        lang_name = LANGUAGES.get(lang, "English")
         voice = VOICE_ARTISTS[voice_key]
         
-        # Detect emotion tags in text
         detected_emotions = []
         for emotion_name, emotion_tag in EMOTIONS.items():
             if emotion_tag in text.lower():
                 detected_emotions.append(emotion_name)
         
-        emotion_indicator = f"😊 {', '.join(detected_emotions)}" if detected_emotions else "😐 Neutral"
-        
         processing = await update.message.reply_text(
-            f"🎵 Converting to voice ({voice['emoji']} {voice['name']} in {lang_name})\n{emotion_indicator}"
+            f"🎵 Converting to voice ({voice['emoji']} {voice['name']})...\n🌍 Language: Auto-detected"
         )
         
-        # Generate voice with the text (emotion tags included)
         audio_file = generate_voice(text, voice['reference_id'])
         
         if audio_file and os.path.exists(audio_file):
             with open(audio_file, 'rb') as audio:
-                # Build caption with language and emotion info
-                caption = f"🎧 *{voice['emoji']} {voice['name']}*\n🌍 {lang_name} · 📝 {len(text)} chars"
+                caption = f"🎧 *{voice['emoji']} {voice['name']}*\n📝 {len(text)} chars"
                 if detected_emotions:
                     caption += f"\n😊 Emotion: {', '.join(detected_emotions)}"
                 caption += f"\n✨ {DEV_NAME}"
@@ -419,14 +317,12 @@ Made with ❤️ by {DEV_NAME}
             await processing.edit_text("❌ Failed to generate voice. Please try again.")
     
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle button clicks with proper page management"""
         query = update.callback_query
         await query.answer()
         
         user_id = str(update.effective_user.id)
         data = query.data
         
-        # Handle voice selection
         if data.startswith("voice_"):
             voice_key = data.replace("voice_", "")
             if voice_key in VOICE_ARTISTS:
@@ -436,52 +332,6 @@ Made with ❤️ by {DEV_NAME}
                     f"✅ Voice changed to: {voice['emoji']} *{voice['name']}*\n{voice['description']}",
                     parse_mode='Markdown'
                 )
-        
-        # Handle language selection
-        elif data.startswith("lang_") and not data.startswith("lang_page_"):
-            lang_code = data.replace("lang_", "")
-            if lang_code in LANGUAGES:
-                self.user_languages[user_id] = lang_code
-                lang_name = LANGUAGES[lang_code]
-                await query.edit_message_text(
-                    f"✅ Language changed to: {lang_name}\n\n"
-                    f"Your text will now be processed in {lang_name}.\n"
-                    f"Use emotion tags like [happy] or [sad] for expressive voice!",
-                    parse_mode='Markdown'
-                )
-        
-        # Handle page navigation
-        elif data == "lang_page_next":
-            current_page = context.user_data.get('lang_page', 0)
-            context.user_data['lang_page'] = current_page + 1
-            await self.language_command(update, context)
-        
-        elif data == "lang_page_prev":
-            current_page = context.user_data.get('lang_page', 0)
-            context.user_data['lang_page'] = max(0, current_page - 1)
-            await self.language_command(update, context)
-        
-        # Handle view all languages
-        elif data == "view_all_langs":
-            all_langs = "🌍 *All 83 Languages*\n\n"
-            # Group by region for better readability
-            regions = {
-                "🇪🇺 European": ["en", "fr", "de", "es", "pt", "it", "nl", "pl", "ru", "uk", "ro", "hu", "cs", "sk", "sl", "hr", "sr", "bs", "mk", "sq", "lv", "lt", "et", "fi", "sv", "nb", "da", "is", "ga", "cy", "eu", "ca", "gl", "el", "bg", "be"],
-                "🇦🇸 Asian": ["zh", "ja", "ko", "hi", "bn", "pa", "te", "ta", "mr", "gu", "kn", "ml", "or", "as", "mai", "sat", "ks", "sd", "kok", "mni", "bodo", "doi", "ne", "si", "my", "km", "lo", "mn", "hy", "ka", "az", "kk", "uz", "tk", "tg", "ps", "fa", "he", "ur"],
-                "🌍 Other": ["ar", "id", "ms", "fil", "vi", "th", "am", "sw", "zu", "xh", "af", "tr"]
-            }
-            
-            for region, codes in regions.items():
-                region_langs = [LANGUAGES[code] for code in codes if code in LANGUAGES]
-                if region_langs:
-                    all_langs += f"*{region}*\n"
-                    for i in range(0, len(region_langs), 8):
-                        chunk = region_langs[i:i+8]
-                        all_langs += " • ".join(chunk) + "\n"
-                    all_langs += "\n"
-            
-            all_langs += "Use /language to select your preferred language."
-            await query.edit_message_text(all_langs, parse_mode='Markdown')
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
@@ -489,16 +339,17 @@ Made with ❤️ by {DEV_NAME}
             f"/start - Welcome message\n"
             f"/help - This guide\n"
             f"/voice - Change voice artist\n"
-            f"/language - Change language (83 options)\n"
             f"/emotions - Show emotion tags\n"
-            f"/sample - Hear a demo with emotions\n"
+            f"/sample - Hear a demo\n"
             f"/about - Bot info\n\n"
+            f"*How to use:*\n"
+            f"• Send text in ANY of 83 languages\n"
+            f"• Add emotion tags for expression\n"
+            f"• Voice is auto-detected\n\n"
             f"*Emotion Tags:*\n"
             f"[happy] 😊 [sad] 😢 [angry] 😠 [excited] 🤩\n"
             f"[calm] 😌 [laughing] 😂 [whispering] 🤫\n"
             f"[serious] 😐 [friendly] 🤗 [neutral] 😐\n\n"
-            f"Send text to convert to voice.\n"
-            f"🌍 83 languages • 🎤 4 voices • 😊 Emotions\n"
             f"✨ *Developer:* {DEV_NAME}",
             parse_mode='Markdown'
         )
@@ -510,14 +361,12 @@ Made with ❤️ by {DEV_NAME}
 
 # ========== MAIN WITH FLASK ==========
 def run_bot():
-    """Run the Telegram bot"""
     bot = VoiceBot()
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     
     app.add_handler(CommandHandler("start", bot.start_command))
     app.add_handler(CommandHandler("help", bot.help_command))
     app.add_handler(CommandHandler("voice", bot.voice_command))
-    app.add_handler(CommandHandler("language", bot.language_command))
     app.add_handler(CommandHandler("emotions", bot.emotions_command))
     app.add_handler(CommandHandler("sample", bot.sample_command))
     app.add_handler(CommandHandler("about", bot.about_command))
@@ -528,11 +377,12 @@ def run_bot():
     webhook_url = os.environ.get("WEBHOOK_URL")
     
     logger.info(f"🎙️ {BOT_NAME} by {DEV_NAME} is running...")
-    logger.info(f"🌍 {len(LANGUAGES)} languages • 🎤 {len(VOICE_ARTISTS)} voices • 😊 10 emotions")
+    logger.info(f"🌍 {len(LANGUAGES)} languages supported")
+    logger.info(f"🎤 {len(VOICE_ARTISTS)} voice artists available")
+    logger.info(f"😊 {len(EMOTIONS)} emotion tags")
     
     if webhook_url:
         logger.info(f"🌐 Starting webhook on port {PORT}")
-        logger.info(f"🔗 Webhook URL: {webhook_url}")
         app.run_webhook(
             listen="0.0.0.0",
             port=PORT,
