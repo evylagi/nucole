@@ -1,1561 +1,376 @@
-#!/usr/bin/env python3
-import requests
-import time
-import random
-import string
-import re
 import os
-import json
 import logging
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Set
-import sys
-import threading
-import asyncio
-from asyncio import Lock
+import requests
+import tempfile
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-try:
-    from flask import Flask, jsonify
-except ImportError:
-    os.system("pip install flask")
-    from flask import Flask, jsonify
+# ========== CONFIGURATION ==========
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8107617495:AAEjCpxJ0qVmG1m7C5rzAU_maM2t9IlnUJs")
+FISH_API_KEY = os.environ.get("FISH_API_KEY", "sk-fish-2IfHrnq1IG3lhnGoCFVbiNwRrdoR_yM4OXZEb7KfO_g")
 
-try:
-    import uuid
-    UUID_AVAILABLE = True
-except ImportError:
-    UUID_AVAILABLE = False
+# ========== BOT SETTINGS ==========
+BOT_NAME = "VoiceStudio Pro"
+DEV_NAME = "J 🧃"
+DEV_ALIAS = "Jews"
+MAX_CHARS = 5000
+PORT = int(os.environ.get("PORT", 8080))
 
-try:
-    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-    from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
-    from telegram.constants import ChatType
-    TELEGRAM_AVAILABLE = True
-except ImportError:
-    TELEGRAM_AVAILABLE = False
-    print("pip install python-telegram-bot")
-    sys.exit(1)
+# ========== VOICE ARTISTS ==========
+VOICE_ARTISTS = {
+    "studio_pro": {
+        "name": "Studio Pro",
+        "reference_id": "95496a7632a14321891943545846c31c",
+        "emoji": "🎙️",
+        "description": "Professional studio quality voice"
+    },
+    "dave": {
+        "name": "Dave",
+        "reference_id": "08bc8442f20945b4a7bce5bde11f2505",
+        "emoji": "👨",
+        "description": "Clear, serious, informative male voice"
+    },
+    "deep_dave": {
+        "name": "Deep Dave",
+        "reference_id": "5d992f2f63074d31a99413fdb157a565",
+        "emoji": "🧘",
+        "description": "Deep, meditative, calm male voice"
+    },
+    "calm": {
+        "name": "Calm Voice",
+        "reference_id": "b347db033a6549378b48d00acb0d06cd",
+        "emoji": "🌊",
+        "description": "Soft, gentle, soothing voice"
+    }
+}
 
-# Configure logging
+# ========== 83 SUPPORTED LANGUAGES ==========
+LANGUAGES = {
+    "af": "🇿🇦 Afrikaans", "am": "🇪🇹 Amharic", "ar": "🇸🇦 Arabic",
+    "as": "🇮🇳 Assamese", "az": "🇦🇿 Azerbaijani", "be": "🇧🇾 Belarusian",
+    "bg": "🇧🇬 Bulgarian", "bn": "🇧🇩 Bengali", "bodo": "🇮🇳 Bodo",
+    "bs": "🇧🇦 Bosnian", "ca": "🇪🇸 Catalan", "cs": "🇨🇿 Czech",
+    "cy": "🇬🇧 Welsh", "da": "🇩🇰 Danish", "de": "🇩🇪 German",
+    "doi": "🇮🇳 Dogri", "el": "🇬🇷 Greek", "en": "🇬🇧 English",
+    "es": "🇪🇸 Spanish", "et": "🇪🇪 Estonian", "eu": "🇪🇸 Basque",
+    "fa": "🇮🇷 Persian", "fi": "🇫🇮 Finnish", "fil": "🇵🇭 Filipino",
+    "fr": "🇫🇷 French", "ga": "🇮🇪 Irish", "gl": "🇪🇸 Galician",
+    "gu": "🇮🇳 Gujarati", "he": "🇮🇱 Hebrew", "hi": "🇮🇳 Hindi",
+    "hr": "🇭🇷 Croatian", "hu": "🇭🇺 Hungarian", "hy": "🇦🇲 Armenian",
+    "id": "🇮🇩 Indonesian", "is": "🇮🇸 Icelandic", "it": "🇮🇹 Italian",
+    "ja": "🇯🇵 Japanese", "ka": "🇬🇪 Georgian", "kk": "🇰🇿 Kazakh",
+    "km": "🇰🇭 Khmer", "kn": "🇮🇳 Kannada", "ko": "🇰🇷 Korean",
+    "kok": "🇮🇳 Konkani", "ks": "🇮🇳 Kashmiri", "lo": "🇱🇦 Lao",
+    "lt": "🇱🇹 Lithuanian", "lv": "🇱🇻 Latvian", "mai": "🇮🇳 Maithili",
+    "mk": "🇲🇰 Macedonian", "ml": "🇮🇳 Malayalam", "mn": "🇲🇳 Mongolian",
+    "mni": "🇮🇳 Manipuri", "mr": "🇮🇳 Marathi", "ms": "🇲🇾 Malay",
+    "my": "🇲🇲 Burmese", "nb": "🇳🇴 Norwegian", "ne": "🇳🇵 Nepali",
+    "nl": "🇳🇱 Dutch", "or": "🇮🇳 Odia", "pa": "🇮🇳 Punjabi",
+    "pl": "🇵🇱 Polish", "ps": "🇦🇫 Pashto", "pt": "🇵🇹 Portuguese",
+    "ro": "🇷🇴 Romanian", "ru": "🇷🇺 Russian", "sat": "🇮🇳 Santali",
+    "sd": "🇵🇰 Sindhi", "si": "🇱🇰 Sinhala", "sk": "🇸🇰 Slovak",
+    "sl": "🇸🇮 Slovenian", "sq": "🇦🇱 Albanian", "sr": "🇷🇸 Serbian",
+    "sv": "🇸🇪 Swedish", "sw": "🇹🇿 Swahili", "ta": "🇮🇳 Tamil",
+    "te": "🇮🇳 Telugu", "tg": "🇹🇯 Tajik", "th": "🇹🇭 Thai",
+    "tk": "🇹🇲 Turkmen", "tr": "🇹🇷 Turkish", "uk": "🇺🇦 Ukrainian",
+    "ur": "🇵🇰 Urdu", "uz": "🇺🇿 Uzbek", "vi": "🇻🇳 Vietnamese",
+    "xh": "🇿🇦 Xhosa", "zh": "🇨🇳 Chinese", "zu": "🇿🇦 Zulu"
+}
+
+# ========== SETUP ==========
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[logging.StreamHandler()]
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Configuration
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8107617495:AAEjCpxJ0qVmG1m7C5rzAU_maM2t9IlnUJs")
-ADMIN_IDS = [int(id.strip()) for id in os.environ.get("ADMIN_IDS", "7716750398").split(",") if id.strip()]
-DB_FILE = "musicgpt_bot.json"
-REQUEST_TIMEOUT = 30
-PORT = int(os.environ.get("PORT", 8080))
-
-# Developer Credits
-DEV_CREDITS = "👨‍💻 **Developers:** @KeemSGHLL & @poqruette"
-DEV_NAMES = ["@KeemSGHLL", "@poqruette"]
-
-os.makedirs("output", exist_ok=True)
-
-# Global status tracking with locks for thread safety
-user_status = {}
-processing_users: Set[int] = set()
-status_lock = Lock()
-repeat_users: Dict[int, bool] = {}
-
-# Loading animation frames
-LOADING_FRAMES = ["◐", "◓", "◑", "◒"]
-
-def load_db():
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, 'r') as f:
-                return json.load(f)
-        except:
-            return {"users": {}, "pending_approvals": [], "generations": []}
-    return {"users": {}, "pending_approvals": [], "generations": []}
-
-def save_db(data):
+# ========== VOICE SERVICE ==========
+def generate_voice(text, reference_id):
     try:
-        with open(DB_FILE, 'w') as f:
-            json.dump(data, f, indent=2, default=str)
-    except:
-        pass
-
-class Database:
-    @staticmethod
-    def get_user(user_id):
-        try:
-            data = load_db()
-            return data["users"].get(str(user_id))
-        except:
+        response = requests.post(
+            "https://api.fish.audio/v1/tts",
+            headers={
+                "Authorization": f"Bearer {FISH_API_KEY}",
+                "Content-Type": "application/json",
+                "model": "s2.1-pro-free",
+            },
+            json={
+                "text": text,
+                "reference_id": reference_id,
+                "format": "mp3",
+            },
+            timeout=60
+        )
+        
+        if response.status_code == 200:
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+            temp_file.write(response.content)
+            temp_file.close()
+            return temp_file.name
+        else:
+            logger.error(f"API Error: {response.status_code}")
             return None
-    
-    @staticmethod
-    def create_user(user_id, username, first_name, last_name):
-        try:
-            data = load_db()
-            user_id_str = str(user_id)
-            if user_id_str in data["users"]:
-                return False
-            is_admin = 1 if user_id in ADMIN_IDS else 0
-            approved = 1 if user_id in ADMIN_IDS else 0
-            data["users"][user_id_str] = {
-                "user_id": user_id,
-                "username": username,
-                "first_name": first_name,
-                "last_name": last_name,
-                "registered_date": datetime.now().isoformat(),
-                "approved": approved,
-                "is_admin": is_admin,
-                "authenticated": 0,
-                "current_email": "",
-                "current_display": "",
-                "current_provider": "",
-                "access_token": "",
-                "musicgpt_user_id": "",
-                "last_audio_id": "",
-                "last_title": "",
-                "last_filepath": ""
-            }
-            save_db(data)
-            return True
-        except:
-            return False
-    
-    @staticmethod
-    def approve_user(user_id):
-        try:
-            data = load_db()
-            user_id_str = str(user_id)
-            if user_id_str in data["users"]:
-                data["users"][user_id_str]["approved"] = 1
-                for pending in data["pending_approvals"]:
-                    if pending["user_id"] == user_id and pending["status"] == "pending":
-                        pending["status"] = "approved"
-                save_db(data)
-        except:
-            pass
-    
-    @staticmethod
-    def reject_user(user_id):
-        try:
-            data = load_db()
-            for pending in data["pending_approvals"]:
-                if pending["user_id"] == user_id and pending["status"] == "pending":
-                    pending["status"] = "rejected"
-            save_db(data)
-        except:
-            pass
-    
-    @staticmethod
-    def request_approval(user_id):
-        try:
-            data = load_db()
-            data["pending_approvals"].append({
-                "user_id": user_id,
-                "requested_at": datetime.now().isoformat(),
-                "status": "pending"
-            })
-            save_db(data)
-        except:
-            pass
-    
-    @staticmethod
-    def get_pending_approvals():
-        try:
-            data = load_db()
-            pending = []
-            for p in data["pending_approvals"]:
-                if p["status"] == "pending":
-                    user = data["users"].get(str(p["user_id"]))
-                    if user:
-                        pending.append((p["user_id"], user.get("username", ""), user.get("first_name", ""), user.get("last_name", ""), p["requested_at"]))
-            return pending
-        except:
-            return []
-    
-    @staticmethod
-    def get_generation_count(user_id):
-        try:
-            data = load_db()
-            count = 0
-            for gen in data["generations"]:
-                if gen["user_id"] == user_id:
-                    gen_date = datetime.fromisoformat(gen["created_at"])
-                    if (datetime.now() - gen_date).days <= 30:
-                        count += 1
-            return count
-        except:
-            return 0
-    
-    @staticmethod
-    def add_generation(user_id, prompt, audio_id, title, file_path):
-        try:
-            data = load_db()
-            data["generations"].append({
-                "user_id": user_id,
-                "prompt": prompt,
-                "audio_id": audio_id,
-                "title": title,
-                "file_path": file_path,
-                "created_at": datetime.now().isoformat()
-            })
-            save_db(data)
-        except:
-            pass
-    
-    @staticmethod
-    def update_session(user_id, authenticated, email, display, provider, token, user_id_api):
-        try:
-            data = load_db()
-            user_id_str = str(user_id)
-            if user_id_str in data["users"]:
-                data["users"][user_id_str]["authenticated"] = authenticated
-                data["users"][user_id_str]["current_email"] = email
-                data["users"][user_id_str]["current_display"] = display
-                data["users"][user_id_str]["current_provider"] = provider
-                data["users"][user_id_str]["access_token"] = token
-                data["users"][user_id_str]["musicgpt_user_id"] = user_id_api
-                save_db(data)
-        except:
-            pass
-    
-    @staticmethod
-    def update_last_audio(user_id, audio_id, title, filepath):
-        try:
-            data = load_db()
-            user_id_str = str(user_id)
-            if user_id_str in data["users"]:
-                data["users"][user_id_str]["last_audio_id"] = audio_id
-                data["users"][user_id_str]["last_title"] = title
-                data["users"][user_id_str]["last_filepath"] = filepath
-                save_db(data)
-        except:
-            pass
-    
-    @staticmethod
-    def get_session(user_id):
-        try:
-            data = load_db()
-            user = data["users"].get(str(user_id))
-            if user:
-                return (
-                    user.get("authenticated", 0),
-                    user.get("current_email", ""),
-                    user.get("current_display", ""),
-                    user.get("current_provider", ""),
-                    user.get("access_token", ""),
-                    user.get("musicgpt_user_id", ""),
-                    user.get("last_audio_id", ""),
-                    user.get("last_title", ""),
-                    user.get("last_filepath", "")
-                )
-            return None
-        except:
-            return None
-    
-    @staticmethod
-    def get_all_users():
-        try:
-            data = load_db()
-            return data["users"]
-        except:
-            return {}
-
-class TempMailORG:
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
-            "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Origin": "https://temp-mail.org",
-            "Referer": "https://temp-mail.org/"
-        })
-        self.token = None
-        self.email_address = None
-        self.provider = "temp-mail.org"
-
-    def create_account(self) -> dict:
-        try:
-            mailbox_resp = self.session.post(
-                "https://web2.temp-mail.org/mailbox",
-                headers={"Content-Length": "0", "Content-Type": "application/json"},
-                timeout=30
-            )
-
-            if mailbox_resp.status_code not in [200, 201]:
-                raise Exception("Service unavailable")
-
-            data = mailbox_resp.json()
-            self.token = data.get("token")
-            self.email_address = data.get("mailbox")
-
-            if not self.token or not self.email_address:
-                raise Exception("No email created")
-
-            self.session.headers["Authorization"] = f"Bearer {self.token}"
-
-            return {"email": self.email_address, "token": self.token, "provider": self.provider}
-        except:
-            raise Exception("Could not create temporary email")
-
-    def get_messages(self) -> list:
-        if not self.token:
-            return []
-        try:
-            resp = self.session.get("https://web2.temp-mail.org/messages", timeout=30)
-            if resp.status_code != 200:
-                return []
-            data = resp.json()
-            if isinstance(data, dict) and "messages" in data:
-                return data["messages"]
-            return data if isinstance(data, list) else []
-        except:
-            return []
-
-    def wait_for_otp(self, timeout: int = 180, poll_interval: int = 5) -> Optional[str]:
-        start_time = time.time()
-        seen_ids = set()
-
-        while time.time() - start_time < timeout:
-            try:
-                messages = self.get_messages()
-                for msg in messages:
-                    msg_id = msg.get("_id") or msg.get("id", "")
-                    if msg_id in seen_ids:
-                        continue
-                    seen_ids.add(msg_id)
-
-                    subject = msg.get("subject", "")
-                    body = msg.get("bodyPreview", "")
-                    html = msg.get("bodyHtml", "")
-                    content = f"{subject} {body} {html}"
-                    
-                    codes = re.findall(r'\b(\d{6})\b', content)
-                    if codes:
-                        return codes[0]
-                    
-                    if "code" in content.lower() or "otp" in content.lower():
-                        codes = re.findall(r'\b(\d{4,8})\b', content)
-                        for code in codes:
-                            if len(code) >= 4 and code.isdigit():
-                                return code
-            except:
-                pass
-            time.sleep(poll_interval)
+    except Exception as e:
+        logger.error(f"Error: {e}")
         return None
 
-    def cleanup(self):
-        pass
-
-class MusicGPTAPI:
-    BASE_URL = "https://api.prod.musicgpt.com"
-
-    def __init__(self, token=None):
-        self.session = requests.Session()
-        self.access_token = token
-        self.user_id = None
-        self.email = None
-        self.anonymous_id = self._gen_id()
-
-        self.session.cookies.set("anonymous_id", self.anonymous_id, domain=".musicgpt.com")
-
-        self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/json",
-            "Origin": "https://musicgpt.com",
-            "Referer": "https://musicgpt.com/"
-        })
-        
-        if token:
-            self.session.headers["Authorization"] = f"Bearer {token}"
-
-    def _gen_id(self) -> str:
-        if UUID_AVAILABLE:
-            return str(uuid.uuid4())
-        return f"{random.getrandbits(32):08x}-{random.getrandbits(16):04x}-4{random.getrandbits(12):03x}-{random.randint(8,11):x}{random.getrandbits(12):03x}-{random.getrandbits(48):012x}"
-
-    def send_otp(self, email: str) -> Optional[str]:
-        try:
-            payload = {"email": email, "language": "en_US"}
-            resp = self.session.post(f"{self.BASE_URL}/authentication/login/email", json=payload, timeout=30)
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
-            if isinstance(data, dict):
-                inner = data.get("data", data)
-                token = inner.get("validation_token")
-                if token:
-                    return token
-                token = data.get("validation_token")
-                if token:
-                    return token
-            return None
-        except:
-            return None
-
-    def verify_otp(self, otp: str, validation_token: str) -> bool:
-        try:
-            payload = {"otp": otp, "validation_token": validation_token}
-            resp = self.session.post(f"{self.BASE_URL}/authentication/login/verify-otp", json=payload, timeout=30)
-            if resp.status_code != 200:
-                return False
-            data = resp.json()
-            if isinstance(data, dict):
-                inner = data.get("data", data)
-                self.access_token = inner.get("access_token")
-                self.user_id = inner.get("user_id")
-                self.email = inner.get("email")
-            else:
-                return False
-            if self.access_token:
-                self.session.headers["Authorization"] = f"Bearer {self.access_token}"
-                return True
-            return False
-        except:
-            return False
-
-    def set_display_name(self, username: str, display_name: str) -> bool:
-        try:
-            resp = self.session.post(
-                f"{self.BASE_URL}/users/front/set-initial-names",
-                json={"display_name": display_name, "username": username},
-                timeout=30
-            )
-            return resp.status_code == 200
-        except:
-            return False
-
-    def submit_prompt(self, prompt: str) -> dict:
-        try:
-            prompt_id = self._gen_id()
-            conversion_id_1 = self._gen_id()
-            conversion_id_2 = self._gen_id()
-
-            payload = {
-                "prompt": prompt,
-                "prompt_id": prompt_id,
-                "conversion_id_1": conversion_id_1,
-                "conversion_id_2": conversion_id_2
-            }
-
-            resp = self.session.post(f"{self.BASE_URL}/prompt/front/submit", json=payload, timeout=60)
-
-            if resp.status_code not in [200, 201]:
-                return {"error": f"HTTP {resp.status_code}", "success": False}
-
-            try:
-                data = resp.json()
-            except:
-                return {"error": "Invalid response", "success": False}
-
-            if isinstance(data, dict):
-                inner = data.get("data", data)
-                eta = inner.get("eta", 90)
-                success = data.get("success", True)
-                if not success:
-                    return {"error": data.get("message", "Unknown error"), "success": False}
-            else:
-                eta = 90
-
-            return {
-                "prompt_id": prompt_id,
-                "conversion_id": conversion_id_2,
-                "eta": eta,
-                "success": True
-            }
-        except requests.Timeout:
-            return {"error": "Connection timeout", "success": False}
-        except Exception as e:
-            return {"error": str(e), "success": False}
-
-    def get_audio(self, audio_id: str) -> Optional[dict]:
-        try:
-            resp = self.session.get(f"{self.BASE_URL}/audio/front/get-by-id/{audio_id}", timeout=30)
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
-            return data.get("data", data) if isinstance(data, dict) else None
-        except:
-            return None
-
-    def wait_for_audio(self, audio_id: str, eta: int, timeout_extra: int = 300) -> Optional[dict]:
-        timeout = eta + timeout_extra
-        start_time = time.time()
-        
-        while time.time() - start_time < timeout:
-            try:
-                data = self.get_audio(audio_id)
-                if data:
-                    status = data.get("conversion_status", "")
-                    if status == "SUCCESS":
-                        return data
-                    elif status == "FAILED":
-                        return None
-            except:
-                pass
-            time.sleep(3)
-        return None
-
-    def get_download_url(self, audio_id: str) -> Optional[str]:
-        try:
-            resp = self.session.get(f"{self.BASE_URL}/download/front/v3/{audio_id}/FULL_SONG", timeout=30)
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
-            if isinstance(data, dict):
-                inner = data.get("data", data)
-                return inner.get("download_url")
-            return None
-        except:
-            return None
-
-class MusicGPTBot:
+# ========== BOT HANDLERS ==========
+class VoiceBot:
     def __init__(self):
-        self.api = None
-        self.temp_mail = None
-        self.bot_username = None
+        self.user_languages = {}
+        self.user_voices = {}
     
-    def is_approved(self, user_id):
-        user = Database.get_user(user_id)
-        return user.get("approved", 0) == 1 if user else False
+    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        welcome_text = f"""
+🎙️ *Welcome to {BOT_NAME}*
+
+🌍 83 languages • 🎤 4 premium voices
+
+*Voice Artists:*
+🎙️ Studio Pro - Studio quality
+👨 Dave - Clear, serious male
+🧘 Deep Dave - Meditative calm
+🌊 Calm Voice - Soft & soothing
+
+*Commands:*
+/voice - Change voice artist
+/language - Change language
+/sample - Hear a demo
+/about - Bot info
+
+Send any text to convert to voice!
+
+---
+✨ *Developer:* {DEV_NAME} a.k.a {DEV_ALIAS}
+        """
+        await update.message.reply_text(welcome_text, parse_mode='Markdown')
     
-    def is_admin(self, user_id):
-        if user_id in ADMIN_IDS:
-            return True
-        user = Database.get_user(user_id)
-        return user.get("is_admin", 0) == 1 if user else False
-    
-    def is_authenticated(self, user_id):
-        session = Database.get_session(user_id)
-        return session[0] == 1 if session else False
-    
-    async def update_status(self, user_id, status):
-        """Update user status with thread safety"""
-        async with status_lock:
-            user_status[str(user_id)] = {
-                "status": status,
-                "timestamp": datetime.now().isoformat(),
-                "is_processing": True
-            }
-    
-    async def clear_status(self, user_id):
-        """Clear user status with thread safety"""
-        async with status_lock:
-            if str(user_id) in user_status:
-                user_status[str(user_id)]["is_processing"] = False
-                user_status[str(user_id)]["status"] = "Ready"
-            
-            if user_id in processing_users:
-                processing_users.remove(user_id)
-    
-    def is_processing(self, user_id):
-        """Check if user is processing"""
-        return user_id in processing_users
-    
-    def is_repeat_enabled(self, user_id):
-        """Check if repeat is enabled for user"""
-        return user_id in repeat_users and repeat_users[user_id]
-    
-    async def check_channel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_chat.type == ChatType.PRIVATE:
-            return True
-        
-        if update.effective_chat.type in [ChatType.GROUP, ChatType.SUPERGROUP, ChatType.CHANNEL]:
-            if not self.bot_username:
-                self.bot_username = (await context.bot.get_me()).username
-            
-            if update.message:
-                text = update.message.text or update.message.caption or ""
-                mention = f"@{self.bot_username}"
-                
-                if mention in text:
-                    return True
-                
-                if update.message.reply_to_message:
-                    if update.message.reply_to_message.from_user.id == context.bot.id:
-                        return True
-            return False
-        
-        return False
-    
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
-        
-        user = update.effective_user
-        if not Database.get_user(user.id):
-            Database.create_user(user.id, user.username, user.first_name, user.last_name)
-        
-        is_processing = self.is_processing(user.id)
-        
-        keyboard = [
-            [InlineKeyboardButton("🎵 Generate Music", callback_data="generate")],
-            [InlineKeyboardButton("🔄 Repeat Loop", callback_data="repeat_loop")],
-            [InlineKeyboardButton("▶️ Play Last Track", callback_data="play")],
-            [InlineKeyboardButton("📊 My Status", callback_data="status")],
-            [InlineKeyboardButton("👤 My Profile", callback_data="profile")],
-            [InlineKeyboardButton("📈 Live Status", callback_data="live_status")]
-        ]
-        
-        if self.is_admin(user.id):
-            keyboard.append([InlineKeyboardButton("👑 Admin Panel", callback_data="admin_panel")])
-            keyboard.append([InlineKeyboardButton("👥 All Users", callback_data="all_users_status")])
-        
-        if not self.is_approved(user.id):
-            keyboard = [
-                [InlineKeyboardButton("🔑 Request Access", callback_data="request_access")],
-                [InlineKeyboardButton("📊 My Status", callback_data="status")]
-            ]
-        
-        welcome = f"🎵 **Welcome {user.first_name}!**\n\n"
-        if is_processing:
-            welcome += "🔄 **You have an active process running!**\n\n"
-        
-        if self.is_approved(user.id):
-            if self.is_authenticated(user.id):
-                welcome += "✅ You are **authenticated** and ready to generate music!\n\n"
-                welcome += "Click **🎵 Generate Music** and tell me what you want!"
-            else:
-                welcome += "🔑 You are **approved** but need to login first.\n\n"
-                welcome += "Click **🔑 Login** to authenticate with MusicGPT."
-        else:
-            welcome += "⏳ You need **approval** to use this bot.\n\n"
-            welcome += "Click **🔑 Request Access** to ask for permission."
-        
-        welcome += f"\n\n{DEV_CREDITS}"
-        
-        await update.message.reply_text(welcome, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
-    
-    async def repeat_loop_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
-        
-        query = update.callback_query
-        await query.answer()
-        user_id = update.effective_user.id
-        
-        if not self.is_approved(user_id):
-            await query.message.reply_text("❌ Access denied. Request approval first.")
-            return
-        
-        if not self.is_authenticated(user_id):
-            keyboard = [[InlineKeyboardButton("🔑 Login", callback_data="login")]]
-            await query.message.reply_text(
-                "❌ **Not Authenticated**\n\n"
-                "You need to login first before using repeat loop.\n\n"
-                f"{DEV_CREDITS}",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='Markdown'
-            )
-            return
-        
-        if user_id in repeat_users and repeat_users[user_id]:
-            repeat_users[user_id] = False
-            await query.message.reply_text(
-                f"🔄 **Repeat Loop Disabled**\n\n"
-                f"Your music will no longer auto-repeat.\n\n"
-                f"{DEV_CREDITS}"
-            )
-        else:
-            repeat_users[user_id] = True
-            await query.message.reply_text(
-                f"🔄 **Repeat Loop Enabled**\n\n"
-                f"Your generated music will auto-repeat!\n"
-                f"Click **🎵 Generate Music** to start.\n\n"
-                f"{DEV_CREDITS}"
-            )
-        
-        await self.start(update, context)
-    
-    async def live_status_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
-        
-        query = update.callback_query
-        await query.answer()
-        user_id = update.effective_user.id
-        
-        status_data = user_status.get(str(user_id), {})
-        is_processing = self.is_processing(user_id)
-        is_repeat = self.is_repeat_enabled(user_id)
-        
-        status_text = "📊 **Live Status**\n\n"
-        
-        if is_processing:
-            status_text += "🔄 **Processing...**\n"
-            status_text += f"Status: {status_data.get('status', 'Initializing...')}\n"
-            status_text += f"Started: {status_data.get('timestamp', 'Just now')}\n\n"
-            status_text += "⏳ Please wait for completion..."
-        else:
-            status_text += "✅ **Idle**\n"
-            status_text += "Ready for new requests!\n\n"
-            if status_data:
-                status_text += f"Last activity: {status_data.get('status', 'None')}\n"
-                status_text += f"Time: {status_data.get('timestamp', 'Unknown')}"
-        
-        status_text += f"\n\n🔄 Repeat Loop: {'✅ Enabled' if is_repeat else '❌ Disabled'}"
-        status_text += f"\n\n{DEV_CREDITS}"
-        
-        keyboard = [
-            [InlineKeyboardButton("🔄 Refresh", callback_data="live_status")],
-            [InlineKeyboardButton("🔄 Toggle Repeat", callback_data="repeat_loop")],
-            [InlineKeyboardButton("🔙 Back", callback_data="back")]
-        ]
-        
-        await query.message.reply_text(
-            status_text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-    
-    async def all_users_status_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
-        
-        query = update.callback_query
-        await query.answer()
-        user_id = update.effective_user.id
-        
-        if not self.is_admin(user_id):
-            await query.message.reply_text("❌ Admin only.")
-            return
-        
-        users = Database.get_all_users()
-        
-        status_text = "👥 **All Users Status**\n\n"
-        
-        if not users:
-            status_text += "No users registered yet."
-        else:
-            active_count = 0
-            repeat_count = 0
-            for uid, user_data in users.items():
-                uid_int = int(uid)
-                is_processing = self.is_processing(uid_int)
-                is_repeat = self.is_repeat_enabled(uid_int)
-                
-                if is_processing:
-                    active_count += 1
-                    status = user_status.get(uid, {})
-                    status_text += f"🔄 **@{user_data.get('username', 'Unknown')}**\n"
-                    status_text += f"Status: {status.get('status', 'Processing...')}\n"
-                    status_text += f"Repeat: {'✅' if is_repeat else '❌'}\n\n"
-                elif is_repeat:
-                    repeat_count += 1
-            
-            if active_count == 0:
-                status_text += "✅ No users currently processing.\n\n"
-            
-            status_text += f"Total users: {len(users)}\n"
-            status_text += f"Currently active: {active_count}\n"
-            status_text += f"Repeat mode: {repeat_count}"
-        
-        status_text += f"\n\n{DEV_CREDITS}"
-        
-        keyboard = [
-            [InlineKeyboardButton("🔄 Refresh", callback_data="all_users_status")],
-            [InlineKeyboardButton("🔙 Back", callback_data="admin_panel")]
-        ]
-        
-        await query.message.reply_text(
-            status_text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-    
-    async def login_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
-        
-        query = update.callback_query
-        await query.answer()
-        user_id = update.effective_user.id
-        
-        if self.is_processing(user_id):
-            await query.message.reply_text("⏳ You have a process running. Please wait.")
-            return
-        
-        if not self.is_approved(user_id):
-            await query.message.reply_text("❌ You need to be approved first. Use /start")
-            return
-        
-        async with status_lock:
-            processing_users.add(user_id)
-        
-        await self.update_status(user_id, "Creating temporary email...")
-        
-        status_msg = await query.message.reply_text("🔄 **Creating temporary email...**\n\n⏳ Please wait...", parse_mode='Markdown')
-        
-        try:
-            await self.update_status(user_id, "Creating email account...")
-            await status_msg.edit_text("🔄 **Creating email account...**\n\n⏳ Connecting to temp-mail.org...")
-            
-            self.temp_mail = TempMailORG()
-            email_data = self.temp_mail.create_account()
-            
-            await self.update_status(user_id, f"Email created: {email_data['email']}")
-            await status_msg.edit_text(f"📧 **Email created**\n\n`{email_data['email']}`\n\n🔄 Requesting OTP...")
-            
-            self.api = MusicGPTAPI()
-            validation_token = self.api.send_otp(email_data["email"])
-            
-            if not validation_token:
-                await self.clear_status(user_id)
-                await status_msg.edit_text("❌ Failed to send OTP. Please try again.")
-                return
-            
-            await self.update_status(user_id, "Waiting for OTP...")
-            await status_msg.edit_text(f"📧 **Waiting for OTP...**\n\nCheck your email: `{email_data['email']}`\n\n⏳ This may take up to 2 minutes...", parse_mode='Markdown')
-            
-            otp = self.temp_mail.wait_for_otp(timeout=180)
-            
-            if not otp:
-                await self.clear_status(user_id)
-                await status_msg.edit_text("❌ OTP not received. Please try again.")
-                return
-            
-            await self.update_status(user_id, "OTP received, verifying...")
-            await status_msg.edit_text(f"✅ OTP received! Verifying...")
-            
-            success = self.api.verify_otp(otp, validation_token)
-            
-            if not success:
-                await self.clear_status(user_id)
-                await status_msg.edit_text("❌ Verification failed. Please try again.")
-                return
-            
-            await self.update_status(user_id, "Setting display name...")
-            username = email_data["email"].split("@")[0]
-            display_name = f"User_{user_id}"
-            
-            self.api.set_display_name(username, display_name)
-            
-            Database.update_session(
-                user_id, 1, email_data["email"], display_name, 
-                "temp-mail.org", 
-                self.api.access_token, self.api.user_id
-            )
-            
-            await self.clear_status(user_id)
-            
-            keyboard = [
-                [InlineKeyboardButton("🎵 Generate Music", callback_data="generate")],
-                [InlineKeyboardButton("🔄 Repeat Loop", callback_data="repeat_loop")],
-                [InlineKeyboardButton("📊 My Status", callback_data="status")],
-                [InlineKeyboardButton("🔙 Back", callback_data="back")]
-            ]
-            
-            success_text = f"✅ **Login Successful!**\n\n"
-            success_text += f"Display: `{display_name}`\n"
-            success_text += f"Email: `{email_data['email']}`\n"
-            success_text += f"Provider: `temp-mail.org`\n\n"
-            success_text += f"🎵 Click **🎵 Generate Music** to start creating!\n\n"
-            success_text += DEV_CREDITS
-            
-            await status_msg.edit_text(
-                success_text,
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='Markdown'
-            )
-            
-        except Exception as e:
-            await self.clear_status(user_id)
-            error_msg = str(e)
-            if "temporary" in error_msg.lower() or "email" in error_msg.lower():
-                await status_msg.edit_text("❌ Could not create temporary email. Please try again.")
-            else:
-                await status_msg.edit_text("❌ Login failed. Please try again.")
-        finally:
-            if self.temp_mail:
-                try:
-                    self.temp_mail.cleanup()
-                except:
-                    pass
-            self.temp_mail = None
-    
-    async def generate_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
-        
-        query = update.callback_query
-        await query.answer()
-        user_id = update.effective_user.id
-        
-        if self.is_processing(user_id):
-            await query.message.reply_text("⏳ You have a process running. Please wait.")
-            return
-        
-        if not self.is_approved(user_id):
-            await query.message.reply_text("❌ Access denied. Request approval first.")
-            return
-        
-        if not self.is_authenticated(user_id):
-            keyboard = [[InlineKeyboardButton("🔑 Login", callback_data="login")]]
-            await query.message.reply_text(
-                "❌ **Not Authenticated**\n\n"
-                "You need to login first before generating music.\n\n"
-                f"{DEV_CREDITS}",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='Markdown'
-            )
-            return
-        
-        await query.message.reply_text(
-            "🎵 **Describe Your Music**\n\n"
-            "Send me a text description of the music you want to create.\n\n"
-            "Examples:\n"
-            "• `Epic orchestral music with dramatic violins`\n"
-            "• `Chill lofi beats for studying`\n"
-            "• `Electronic dance music with heavy bass`\n\n"
-            "💡 Tip: Enable **🔄 Repeat Loop** for auto-repeat!\n\n"
-            f"✏️ Type your prompt now:\n\n{DEV_CREDITS}"
-        )
-        context.user_data['awaiting_prompt'] = True
-    
-    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
-        
-        user_id = update.effective_user.id
-        text = update.message.text or ""
-        
-        if context.user_data.get('awaiting_prompt'):
-            context.user_data['awaiting_prompt'] = False
-            await self.process_generation(update, context, text)
-            return
-        
-        keyboard = [
-            [InlineKeyboardButton("🎵 Generate Music", callback_data="generate")],
-            [InlineKeyboardButton("🔄 Repeat Loop", callback_data="repeat_loop")],
-            [InlineKeyboardButton("📊 My Status", callback_data="status")],
-            [InlineKeyboardButton("🔙 Back", callback_data="back")]
-        ]
-        await update.message.reply_text(
-            f"I'm not sure what you want. Please use the buttons below:\n\n{DEV_CREDITS}",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    
-    async def process_generation(self, update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str):
-        user_id = update.effective_user.id
-        
-        if self.is_processing(user_id):
-            await update.message.reply_text("⏳ You have a process running. Please wait.")
-            return
-        
-        async with status_lock:
-            processing_users.add(user_id)
-        
-        await self.update_status(user_id, f"Generating: {prompt[:30]}...")
-        
-        # Initial status
-        status_msg = await update.message.reply_text(
-            f"🎵 **Generating music...**\n\n"
-            f"Prompt: `{prompt}`\n\n"
-            f"🔴 Starting up...\n{LOADING_FRAMES[0]} Initializing...",
-            parse_mode='Markdown'
-        )
-        
-        try:
-            session = Database.get_session(user_id)
-            if not session or not session[4]:
-                await self.clear_status(user_id)
-                await status_msg.edit_text("❌ Session expired. Login again.")
-                return
-            
-            self.api = MusicGPTAPI(session[4])
-            
-            await self.update_status(user_id, "Submitting prompt...")
-            await status_msg.edit_text(
-                f"🎵 **Generating music...**\n\n"
-                f"Prompt: `{prompt}`\n\n"
-                f"🔴 Submitting request...",
-                parse_mode='Markdown'
-            )
-            
-            result = self.api.submit_prompt(prompt)
-            
-            if not result.get("success"):
-                error_msg = result.get("error", "Unknown error")
-                await self.clear_status(user_id)
-                await status_msg.edit_text(f"❌ Failed to generate: {error_msg}\n\nPlease try again with a different prompt.")
-                return
-            
-            eta = result['eta']
-            
-            # Update to yellow (processing)
-            await status_msg.edit_text(
-                f"🎵 **Generating music...**\n\n"
-                f"Prompt: `{prompt}`\n\n"
-                f"🟡 Processing...\n⏳ Estimated time: {eta}s",
-                parse_mode='Markdown'
-            )
-            
-            await self.update_status(user_id, "Generating audio...")
-            
-            # Run the blocking audio generation in a separate thread
-            loop = asyncio.get_event_loop()
-            audio_data = await loop.run_in_executor(
-                None, 
-                self.api.wait_for_audio,
-                result["conversion_id"], 
-                eta
-            )
-            
-            if not audio_data:
-                await self.clear_status(user_id)
-                await status_msg.edit_text("❌ Generation timed out. Please try again.")
-                return
-            
-            # Update to green (almost done)
-            await status_msg.edit_text(
-                f"🎵 **Generating music...**\n\n"
-                f"Prompt: `{prompt}`\n\n"
-                f"🟢 Almost done!\n⏳ Finalizing...",
-                parse_mode='Markdown'
-            )
-            
-            await self.update_status(user_id, "Getting download URL...")
-            audio_id = audio_data.get("id", result["conversion_id"])
-            download_url = self.api.get_download_url(audio_id)
-            
-            if not download_url:
-                await self.clear_status(user_id)
-                await status_msg.edit_text("❌ Failed to get download URL. Please try again.")
-                return
-            
-            await self.update_status(user_id, "Downloading audio...")
-            await status_msg.edit_text(
-                f"📥 **Downloading audio...**\n\n"
-                f"🟢 Finalizing...\n{LOADING_FRAMES[2]} Please wait...",
-                parse_mode='Markdown'
-            )
-            
-            title = audio_data.get("title", "music")
-            safe_title = re.sub(r'[^\w\-_\. ]', '_', title)
-            safe_title = re.sub(r'_+', '_', safe_title)
-            filename = f"{safe_title}_{audio_id[:8]}.mp3"
-            
-            filepath = os.path.join("output", filename)
-            
-            # Download in a separate thread to not block
-            def download_audio():
-                resp = requests.get(download_url, stream=True, timeout=120)
-                if resp.status_code == 200:
-                    with open(filepath, "wb") as f:
-                        for chunk in resp.iter_content(8192):
-                            if chunk:
-                                f.write(chunk)
-                    return True
-                return False
-            
-            download_success = await loop.run_in_executor(None, download_audio)
-            
-            if download_success:
-                Database.add_generation(user_id, prompt, audio_id, title, filepath)
-                Database.update_last_audio(user_id, audio_id, title, filepath)
-                
-                await self.update_status(user_id, "Sending audio...")
-                await status_msg.edit_text(
-                    f"📤 **Sending your music...**\n\n"
-                    f"✅ Complete!",
-                    parse_mode='Markdown'
-                )
-                
-                with open(filepath, "rb") as f:
-                    await context.bot.send_audio(
-                        chat_id=update.effective_chat.id,
-                        audio=f,
-                        title=title,
-                        performer="MusicGPT AI",
-                        caption=f"🎵 **{title}**\n\nPrompt: `{prompt}`\n\n✨ Generated by MusicGPT AI\n\n{DEV_CREDITS}"
-                    )
-                
-                await self.clear_status(user_id)
-                
-                keyboard = [
-                    [InlineKeyboardButton("▶️ Play Again", callback_data="play")],
-                    [InlineKeyboardButton("🎵 Generate More", callback_data="generate")],
-                    [InlineKeyboardButton("🔄 Repeat Loop", callback_data="repeat_loop")],
-                    [InlineKeyboardButton("📊 My Status", callback_data="status")]
-                ]
-                
-                is_repeat = self.is_repeat_enabled(user_id)
-                repeat_status = "🔄 **Repeat Loop: Enabled**" if is_repeat else "🔄 **Repeat Loop: Disabled**"
-                
-                await status_msg.edit_text(
-                    f"✅ **Generation Complete!**\n\n"
-                    f"Title: `{title}`\n"
-                    f"Duration: {audio_data.get('audio_length_ms', 0) / 1000:.1f}s\n"
-                    f"{repeat_status}\n\n"
-                    f"What would you like to do next?\n\n{DEV_CREDITS}",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
-                    parse_mode='Markdown'
-                )
-                
-                if is_repeat:
-                    await asyncio.sleep(2)
-                    await self.process_generation(update, context, prompt)
-                
-            else:
-                await self.clear_status(user_id)
-                await status_msg.edit_text("❌ Download failed. Please try again.")
-                
-        except Exception as e:
-            logger.error(f"Generation error for user {user_id}: {e}")
-            await self.clear_status(user_id)
-            await status_msg.edit_text(f"❌ Failed to generate music. Please try again.")
-    
-    async def play_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
-        
-        query = update.callback_query
-        await query.answer()
-        user_id = update.effective_user.id
-        
-        session = Database.get_session(user_id)
-        if not session:
-            await query.message.reply_text("❌ User not found. Use /start first.")
-            return
-        
-        filepath = session[8]
-        audio_id = session[6]
-        title = session[7]
-        
-        if filepath and os.path.exists(filepath):
-            await query.message.reply_text(f"▶️ Playing: `{title}`", parse_mode='Markdown')
-            with open(filepath, "rb") as f:
-                await context.bot.send_audio(
-                    chat_id=update.effective_chat.id,
-                    audio=f,
-                    title=title,
-                    performer="MusicGPT AI",
-                    caption=f"{DEV_CREDITS}"
-                )
-        elif audio_id:
-            await query.message.reply_text(f"🔄 Fetching audio...", parse_mode='Markdown')
-            
-            session_data = Database.get_session(user_id)
-            if not session_data or not session_data[4]:
-                await query.message.reply_text("❌ Session expired. Login again.")
-                return
-            
-            self.api = MusicGPTAPI(session_data[4])
-            audio_data = self.api.get_audio(audio_id)
-            
-            if audio_data:
-                download_url = self.api.get_download_url(audio_id)
-                if download_url:
-                    title = audio_data.get("title", "music")
-                    safe_title = re.sub(r'[^\w\-_\. ]', '_', title)
-                    filename = f"{safe_title}_{audio_id[:8]}.mp3"
-                    
-                    filepath = os.path.join("output", filename)
-                    
-                    resp = requests.get(download_url, stream=True, timeout=120)
-                    if resp.status_code == 200:
-                        with open(filepath, "wb") as f:
-                            for chunk in resp.iter_content(8192):
-                                if chunk:
-                                    f.write(chunk)
-                        
-                        Database.update_last_audio(user_id, audio_id, title, filepath)
-                        
-                        await query.message.reply_text(f"▶️ Playing: `{title}`", parse_mode='Markdown')
-                        with open(filepath, "rb") as f:
-                            await context.bot.send_audio(
-                                chat_id=update.effective_chat.id,
-                                audio=f,
-                                title=title,
-                                performer="MusicGPT AI",
-                                caption=f"{DEV_CREDITS}"
-                            )
-                    else:
-                        await query.message.reply_text("❌ Failed to download.")
-                else:
-                    await query.message.reply_text("❌ No download URL available.")
-            else:
-                await query.message.reply_text("❌ Could not fetch audio data.")
-        else:
-            keyboard = [[InlineKeyboardButton("🎵 Generate Music", callback_data="generate")]]
-            await query.message.reply_text(
-                "❌ Nothing to play. Generate music first.",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-    
-    async def status_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
-        
-        query = update.callback_query
-        await query.answer()
-        user_id = update.effective_user.id
-        
-        session = Database.get_session(user_id)
-        if not session:
-            await query.message.reply_text("❌ User not found. Use /start first.")
-            return
-        
-        authenticated = session[0] == 1
-        email = session[1] or "Not set"
-        display = session[2] or "Not set"
-        provider = session[3] or "Not set"
-        
-        is_processing = self.is_processing(user_id)
-        status_data = user_status.get(str(user_id), {})
-        is_repeat = self.is_repeat_enabled(user_id)
+    async def voice_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = str(update.effective_user.id)
+        current_voice = self.user_voices.get(user_id, "studio_pro")
         
         keyboard = []
-        if authenticated:
-            keyboard.append([InlineKeyboardButton("🎵 Generate Music", callback_data="generate")])
-        else:
-            keyboard.append([InlineKeyboardButton("🔑 Login", callback_data="login")])
-        keyboard.append([InlineKeyboardButton("🔄 Toggle Repeat", callback_data="repeat_loop")])
-        keyboard.append([InlineKeyboardButton("📈 Live Status", callback_data="live_status")])
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="back")])
+        for key, voice in VOICE_ARTISTS.items():
+            is_current = " ✅" if key == current_voice else ""
+            keyboard.append([InlineKeyboardButton(
+                f"{voice['emoji']} {voice['name']}{is_current}",
+                callback_data=f"voice_{key}"
+            )])
         
-        status_text = f"📊 **Session Status**\n\n"
-        status_text += f"✅ Authenticated: {'Yes' if authenticated else 'No'}\n"
-        if authenticated:
-            status_text += f"Display: `{display}`\n"
-            status_text += f"Email: `{email}`\n"
-            status_text += f"Provider: `{provider}`\n"
-        status_text += f"User ID: `{user_id}`\n\n"
-        status_text += f"🔄 Repeat Loop: {'✅ Enabled' if is_repeat else '❌ Disabled'}\n\n"
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        current = VOICE_ARTISTS[current_voice]
         
-        if is_processing:
-            status_text += "🔄 **Currently Processing**\n"
-            status_text += f"Status: {status_data.get('status', 'Initializing...')}\n"
-        elif authenticated:
-            status_text += "🎵 Ready to generate music!"
-        else:
-            status_text += "🔑 Click 'Login' to authenticate."
-        
-        status_text += f"\n\n{DEV_CREDITS}"
-        
-        await query.message.reply_text(
-            status_text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
+        await update.message.reply_text(
+            f"🎤 *Select Voice Artist*\n\nCurrent: {current['name']}\n{current['description']}",
+            parse_mode='Markdown',
+            reply_markup=reply_markup
         )
     
-    async def profile_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
+    async def language_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = str(update.effective_user.id)
+        current_lang = self.user_languages.get(user_id, "en")
         
-        query = update.callback_query
-        await query.answer()
-        user_id = update.effective_user.id
+        page = context.user_data.get('lang_page', 0)
+        lang_codes = sorted(LANGUAGES.keys())
+        items_per_page = 20
+        total_pages = (len(lang_codes) + items_per_page - 1) // items_per_page
         
-        user = Database.get_user(user_id)
-        if not user:
-            await query.message.reply_text("❌ User not found.")
-            return
+        start_idx = page * items_per_page
+        end_idx = min(start_idx + items_per_page, len(lang_codes))
         
-        approved = self.is_approved(user_id)
-        admin = self.is_admin(user_id)
-        authenticated = self.is_authenticated(user_id)
-        monthly = Database.get_generation_count(user_id)
-        is_repeat = self.is_repeat_enabled(user_id)
+        keyboard = []
+        for code in lang_codes[start_idx:end_idx]:
+            if code in LANGUAGES:
+                is_current = " ✅" if code == current_lang else ""
+                keyboard.append([InlineKeyboardButton(
+                    f"{LANGUAGES[code]}{is_current}",
+                    callback_data=f"lang_{code}"
+                )])
         
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back")]]
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton("◀️", callback_data="lang_page_prev"))
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton("▶️", callback_data="lang_page_next"))
+        if nav_row:
+            keyboard.append(nav_row)
         
-        profile_text = f"👤 **Profile**\n\n"
-        profile_text += f"Name: {user.get('first_name', '')} @{user.get('username', 'None')}\n"
-        profile_text += f"Admin: {'✅' if admin else '❌'}\n"
-        profile_text += f"Approved: {'✅' if approved else '❌'}\n"
-        profile_text += f"Authenticated: {'✅' if authenticated else '❌'}\n"
-        profile_text += f"Generations: {monthly}/month\n"
-        profile_text += f"Repeat Loop: {'✅ Enabled' if is_repeat else '❌ Disabled'}\n\n"
+        keyboard.append([InlineKeyboardButton("📚 View All", callback_data="view_all_langs")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
         
-        if authenticated:
-            profile_text += "🎵 Ready to generate!"
-        else:
-            profile_text += "🔑 Use 'Login' to authenticate."
-        
-        profile_text += f"\n\n{DEV_CREDITS}"
-        
-        await query.message.reply_text(
-            profile_text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
+        current_display = LANGUAGES.get(current_lang, "English")
+        await update.message.reply_text(
+            f"🌍 *Select Language*\n\nCurrent: {current_display}\nPage {page + 1}/{total_pages}",
+            parse_mode='Markdown',
+            reply_markup=reply_markup
         )
     
-    async def admin_panel_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
+    async def sample_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = str(update.effective_user.id)
+        lang = self.user_languages.get(user_id, "en")
+        voice_key = self.user_voices.get(user_id, "studio_pro")
         
-        query = update.callback_query
-        await query.answer()
-        user_id = update.effective_user.id
+        lang_name = LANGUAGES.get(lang, "English")
+        voice = VOICE_ARTISTS[voice_key]
         
-        if not self.is_admin(user_id):
-            await query.message.reply_text("❌ Admin only.")
-            return
+        await update.message.reply_text(f"🎵 Generating sample with {voice['emoji']} {voice['name']}...")
         
-        pending = Database.get_pending_approvals()
-        active_users = len(processing_users)
+        sample_texts = {
+            "en": f"[laugh] Hello! Welcome to {BOT_NAME}. This is the {voice['name']} voice. [laugh] Thanks to J a.k.a Jews for creating this multilingual bot! [laugh]",
+            "zh": f"[laugh] 你好！欢迎来到 {BOT_NAME}。这是{voice['name']}的声音。[laugh] 感谢 J a.k.a Jews 创建了这个多语言机器人！[laugh]",
+            "ja": f"[laugh] こんにちは！{BOT_NAME}へようこそ。これは{voice['name']}の声です。[laugh] J a.k.a Jews がこの多言語ボットを作成してくれてありがとう！[laugh]",
+            "es": f"[laugh] ¡Hola! Bienvenido a {BOT_NAME}. Esta es la voz de {voice['name']}。[laugh] ¡Gracias a J a.k.a Jews por crear este bot multilingüe！[laugh]",
+        }
         
-        keyboard = [
-            [InlineKeyboardButton("📋 View Pending", callback_data="view_pending")],
-            [InlineKeyboardButton("👥 All Users Status", callback_data="all_users_status")],
-            [InlineKeyboardButton("🔙 Back", callback_data="back")]
-        ]
+        sample_text = sample_texts.get(lang, sample_texts["en"])
+        audio_file = generate_voice(sample_text, voice['reference_id'])
         
-        admin_text = f"👑 **Admin Panel**\n\n"
-        admin_text += f"Pending Requests: {len(pending)}\n"
-        admin_text += f"Active Users: {active_users}\n\n"
-        admin_text += "Click 'View Pending' to see all requests.\n\n"
-        admin_text += DEV_CREDITS
-        
-        await query.message.reply_text(
-            admin_text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-    
-    async def view_pending_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
-        
-        query = update.callback_query
-        await query.answer()
-        user_id = update.effective_user.id
-        
-        if not self.is_admin(user_id):
-            await query.message.reply_text("❌ Admin only.")
-            return
-        
-        pending = Database.get_pending_approvals()
-        
-        if not pending:
-            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="admin_panel")]]
-            await query.message.reply_text(
-                f"📋 No pending requests.\n\n{DEV_CREDITS}",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            return
-        
-        for p in pending:
-            keyboard = [
-                [
-                    InlineKeyboardButton("✅ Approve", callback_data=f"approve_{p[0]}"),
-                    InlineKeyboardButton("❌ Reject", callback_data=f"reject_{p[0]}")
-                ],
-                [InlineKeyboardButton("🔙 Back", callback_data="admin_panel")]
-            ]
-            await query.message.reply_text(
-                f"**Pending Request**\n\n"
-                f"User: {p[2]} @{p[1]}\n"
-                f"ID: `{p[0]}`\n"
-                f"Requested: {p[4][:19]}\n\n{DEV_CREDITS}",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='Markdown'
-            )
-    
-    async def request_access_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
-        
-        query = update.callback_query
-        await query.answer()
-        user_id = update.effective_user.id
-        
-        if self.is_approved(user_id):
-            await query.message.reply_text("✅ You're already approved!")
-            return
-        
-        data = load_db()
-        for pending in data["pending_approvals"]:
-            if pending["user_id"] == user_id and pending["status"] == "pending":
-                await query.message.reply_text("⏳ Request already pending.")
-                return
-        
-        Database.request_approval(user_id)
-        
-        for admin_id in ADMIN_IDS:
-            try:
-                keyboard = [[
-                    InlineKeyboardButton("✅ Approve", callback_data=f"approve_{user_id}"),
-                    InlineKeyboardButton("❌ Reject", callback_data=f"reject_{user_id}")
-                ]]
-                await context.bot.send_message(
-                    chat_id=admin_id,
-                    text=f"🔔 New Request\nUser: {update.effective_user.first_name} @{update.effective_user.username}\nID: `{user_id}`",
-                    reply_markup=InlineKeyboardMarkup(keyboard),
+        if audio_file and os.path.exists(audio_file):
+            with open(audio_file, 'rb') as audio:
+                await update.message.reply_voice(
+                    voice=audio,
+                    caption=f"🎧 *Sample*\n{voice['emoji']} {voice['name']} · 🌍 {lang_name}\n✨ {DEV_NAME}",
                     parse_mode='Markdown'
                 )
-            except:
-                pass
+            os.unlink(audio_file)
+        else:
+            await update.message.reply_text("❌ Failed. Please try again.")
+    
+    async def about_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        about_text = f"""
+ℹ️ *About {BOT_NAME}*
+
+*Version:* 3.0
+*Developer:* {DEV_NAME} a.k.a {DEV_ALIAS}
+*Languages:* 83 supported
+*Max Characters:* {MAX_CHARS}
+
+*Voice Artists:*
+🎙️ Studio Pro - Studio quality
+👨 Dave - Clear, serious male
+🧘 Deep Dave - Meditative calm
+🌊 Calm Voice - Soft & soothing
+
+Made with ❤️ by {DEV_NAME}
+        """
+        await update.message.reply_text(about_text, parse_mode='Markdown')
+    
+    async def handle_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = str(update.effective_user.id)
+        text = update.message.text
         
-        keyboard = [[InlineKeyboardButton("📊 Check Status", callback_data="status")]]
-        await query.message.reply_text(
-            f"✅ **Request Sent!**\n\n"
-            f"Your access request has been sent to the admins.\n"
-            f"You'll be notified when approved.\n\n{DEV_CREDITS}",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+        if len(text) > MAX_CHARS:
+            await update.message.reply_text(f"⚠️ Text exceeds {MAX_CHARS} characters.")
+            return
+        
+        lang = self.user_languages.get(user_id, "en")
+        voice_key = self.user_voices.get(user_id, "studio_pro")
+        
+        lang_name = LANGUAGES.get(lang, "English")
+        voice = VOICE_ARTISTS[voice_key]
+        
+        processing = await update.message.reply_text(f"🎵 Converting to voice ({voice['emoji']} {voice['name']})...")
+        
+        audio_file = generate_voice(text, voice['reference_id'])
+        
+        if audio_file and os.path.exists(audio_file):
+            with open(audio_file, 'rb') as audio:
+                await update.message.reply_voice(
+                    voice=audio,
+                    caption=f"🎧 *{voice['emoji']} {voice['name']}*\n🌍 {lang_name} · 📝 {len(text)} chars\n✨ {DEV_NAME}",
+                    parse_mode='Markdown'
+                )
+            os.unlink(audio_file)
+            await processing.delete()
+        else:
+            await processing.edit_text("❌ Failed. Please try again.")
+    
+    async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        
+        user_id = str(update.effective_user.id)
+        data = query.data
+        
+        if data.startswith("voice_"):
+            voice_key = data.replace("voice_", "")
+            if voice_key in VOICE_ARTISTS:
+                self.user_voices[user_id] = voice_key
+                voice = VOICE_ARTISTS[voice_key]
+                await query.edit_message_text(
+                    f"✅ Voice changed to: {voice['emoji']} *{voice['name']}*\n{voice['description']}",
+                    parse_mode='Markdown'
+                )
+        
+        elif data.startswith("lang_"):
+            lang_code = data.replace("lang_", "")
+            if lang_code in LANGUAGES:
+                self.user_languages[user_id] = lang_code
+                await query.edit_message_text(
+                    f"✅ Language changed to: {LANGUAGES[lang_code]}",
+                    parse_mode='Markdown'
+                )
+        
+        elif data == "view_all_langs":
+            all_langs = "🌍 *All 83 Languages*\n\n"
+            for code, name in sorted(LANGUAGES.items()):
+                all_langs += f"{name}\n"
+            all_langs += "\nUse /language to select."
+            await query.edit_message_text(all_langs, parse_mode='Markdown')
+        
+        elif data == "lang_page_next":
+            context.user_data['lang_page'] = context.user_data.get('lang_page', 0) + 1
+            await self.language_command(update, context)
+        
+        elif data == "lang_page_prev":
+            context.user_data['lang_page'] = max(0, context.user_data.get('lang_page', 0) - 1)
+            await self.language_command(update, context)
+    
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text(
+            f"📋 *Commands*\n\n"
+            f"/start - Welcome\n/help - This guide\n"
+            f"/voice - Change voice\n/language - Change language\n"
+            f"/sample - Hear demo\n/about - Bot info\n\n"
+            f"Send text to convert to voice.\n"
+            f"🌍 83 languages • 🎤 4 voices\n"
+            f"✨ *Developer:* {DEV_NAME}",
             parse_mode='Markdown'
         )
     
-    async def back_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
-        
-        query = update.callback_query
-        await query.answer()
-        await self.start(update, context)
-    
-    async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
-        
-        query = update.callback_query
-        data = query.data
-        
-        if data == "login":
-            await self.login_callback(update, context)
-        elif data == "generate":
-            await self.generate_callback(update, context)
-        elif data == "repeat_loop":
-            await self.repeat_loop_callback(update, context)
-        elif data == "play":
-            await self.play_callback(update, context)
-        elif data == "status":
-            await self.status_callback(update, context)
-        elif data == "profile":
-            await self.profile_callback(update, context)
-        elif data == "live_status":
-            await self.live_status_callback(update, context)
-        elif data == "all_users_status":
-            await self.all_users_status_callback(update, context)
-        elif data == "admin_panel":
-            await self.admin_panel_callback(update, context)
-        elif data == "view_pending":
-            await self.view_pending_callback(update, context)
-        elif data == "request_access":
-            await self.request_access_callback(update, context)
-        elif data == "back":
-            await self.back_callback(update, context)
-        elif data.startswith("approve_") or data.startswith("reject_"):
-            await self.approve_reject_callback(update, context)
-    
-    async def approve_reject_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.check_channel(update, context):
-            return
-        
-        query = update.callback_query
-        user_id = update.effective_user.id
-        
-        if not self.is_admin(user_id):
-            await query.message.reply_text("❌ Admin only.")
-            return
-        
-        data = query.data
-        action, target = data.split("_")
-        target = int(target)
-        
-        if action == "approve":
-            Database.approve_user(target)
-            await query.message.edit_text(f"✅ User approved!\n\n{DEV_CREDITS}")
-            try:
-                await context.bot.send_message(
-                    chat_id=target, 
-                    text=f"🎉 **Approved!**\n\nYou can now use the bot. Click /start to begin.\n\n{DEV_CREDITS}"
-                )
-            except:
-                pass
-        else:
-            Database.reject_user(target)
-            await query.message.edit_text(f"❌ User rejected.\n\n{DEV_CREDITS}")
-            try:
-                await context.bot.send_message(
-                    chat_id=target, 
-                    text=f"❌ **Denied**\n\nYour access request was rejected.\n\n{DEV_CREDITS}"
-                )
-            except:
-                pass
-    
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        error = context.error
-        
-        if "Conflict" in str(error) and "getUpdates" in str(error):
-            return
-        
-        logger.error(f"Error: {error}")
-        
+        logger.error(f"Error: {context.error}")
         if update and update.effective_message:
-            try:
-                keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="back")]]
-                await update.effective_message.reply_text(
-                    f"❌ Something went wrong. Please try again.\n\n{DEV_CREDITS}",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-            except:
-                pass
+            await update.effective_message.reply_text("⚠️ Service unavailable. Please try again.")
 
-# Health check server
-def run_health_server():
-    try:
-        health_app = Flask(__name__)
-        
-        @health_app.route('/')
-        @health_app.route('/health')
-        def health():
-            return jsonify({
-                "status": "healthy",
-                "active_users": len(processing_users),
-                "total_users": len(Database.get_all_users()),
-                "developers": ["@KeemSGHLL", "@poqruette"]
-            }), 200
-        
-        health_app.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
-    except:
-        pass
-
+# ========== MAIN ==========
 def main():
-    if not TELEGRAM_AVAILABLE:
-        print("Install: pip install python-telegram-bot")
-        return
+    bot = VoiceBot()
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
     
-    health_thread = threading.Thread(target=run_health_server, daemon=True)
-    health_thread.start()
-    
-    time.sleep(2)
-    
-    bot = MusicGPTBot()
-    
-    app = Application.builder()\
-        .token(BOT_TOKEN)\
-        .connect_timeout(30.0)\
-        .read_timeout(30.0)\
-        .build()
-    
-    app.add_handler(CommandHandler("start", bot.start))
+    app.add_handler(CommandHandler("start", bot.start_command))
+    app.add_handler(CommandHandler("help", bot.help_command))
+    app.add_handler(CommandHandler("voice", bot.voice_command))
+    app.add_handler(CommandHandler("language", bot.language_command))
+    app.add_handler(CommandHandler("sample", bot.sample_command))
+    app.add_handler(CommandHandler("about", bot.about_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_text))
     app.add_handler(CallbackQueryHandler(bot.button_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
     app.add_error_handler(bot.error_handler)
     
-    print("✅ Bot started!")
-    print(f"👑 Admin ID: {ADMIN_IDS[0] if ADMIN_IDS else 'Not set'}")
-    print("🎵 MusicGPT integration ready!")
-    print("📈 Live status tracking enabled!")
-    print("🔄 Repeat loop enabled!")
-    print(f"👨‍💻 Developers: @KeemSGHLL & @poqruette")
+    logger.info(f"🎙️ {BOT_NAME} by {DEV_NAME} is running...")
+    logger.info(f"🌍 {len(LANGUAGES)} languages • 🎤 {len(VOICE_ARTISTS)} voices")
     
-    try:
-        app.run_polling(
-            allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,
-            stop_signals=None
+    # Start webhook for Render or polling
+    if os.environ.get("RENDER"):
+        logger.info(f"Starting webhook on port {PORT}")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            webhook_url=os.environ.get("WEBHOOK_URL")
         )
-    except KeyboardInterrupt:
-        print("\n👋 Bot stopped.")
-    except Exception as e:
-        print(f"❌ Fatal error: {e}")
+    else:
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
