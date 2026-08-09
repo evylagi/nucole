@@ -5,8 +5,8 @@ import logging
 import requests
 import tempfile
 import signal
-import threading
-from datetime import datetime, timedelta
+from datetime import datetime
+from flask import Flask, Response
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
@@ -21,10 +21,18 @@ DEV_ALIAS = "Jews"
 MAX_CHARS = 5000
 PORT = int(os.environ.get("PORT", 8080))
 
-# ========== STEALTH DEPLOYMENT SETTINGS ==========
-DEPLOYMENT_TIMEOUT = 30  # Seconds to wait for deployment to complete
-IS_RENDER = os.environ.get("RENDER", False)
-IS_DEPLOYING = True  # Flag to prevent premature webhook startup
+# ========== FLASK APP FOR HEALTH CHECK ==========
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def health_check():
+    """Health check endpoint for Render"""
+    return "Bot is running!", 200
+
+@flask_app.route('/health')
+def health():
+    """Detailed health check"""
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}, 200
 
 # ========== VOICE ARTISTS ==========
 VOICE_ARTISTS = {
@@ -93,30 +101,6 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-# ========== STEALTH DEPLOYMENT HANDLER ==========
-def stealth_deployment():
-    """Handle Render deployment without getting stuck"""
-    global IS_DEPLOYING
-    
-    logger.info("🔒 Stealth deployment mode activated")
-    logger.info(f"📦 Render environment: {IS_RENDER}")
-    logger.info(f"⏱️ Deployment timeout: {DEPLOYMENT_TIMEOUT}s")
-    
-    # Wait for deployment to settle
-    if IS_RENDER:
-        logger.info("⏳ Waiting for deployment to complete...")
-        time.sleep(3)  # Brief pause for Render to finish setup
-        
-        # Check if we're in a healthy state
-        health_check = os.environ.get("HEALTH_CHECK", "true")
-        if health_check.lower() == "true":
-            logger.info("✅ Health check passed")
-            IS_DEPLOYING = False
-            return True
-    
-    IS_DEPLOYING = False
-    return True
 
 # ========== VOICE SERVICE ==========
 def generate_voice(text, reference_id):
@@ -383,21 +367,9 @@ Made with ❤️ by {DEV_NAME}
         if update and update.effective_message:
             await update.effective_message.reply_text("⚠️ Service unavailable. Please try again.")
 
-# ========== MAIN WITH STEALTH DEPLOYMENT ==========
-def main():
-    # Run stealth deployment handler first
-    if not stealth_deployment():
-        logger.error("❌ Stealth deployment failed")
-        sys.exit(1)
-    
-    # Signal handlers for graceful shutdown
-    def signal_handler(sig, frame):
-        logger.info("🛑 Received shutdown signal. Stopping gracefully...")
-        sys.exit(0)
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
+# ========== MAIN WITH FLASK ==========
+def run_bot():
+    """Run the Telegram bot"""
     bot = VoiceBot()
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     
@@ -416,28 +388,47 @@ def main():
     
     logger.info(f"🎙️ {BOT_NAME} by {DEV_NAME} is running...")
     logger.info(f"🌍 {len(LANGUAGES)} languages • 🎤 {len(VOICE_ARTISTS)} voices")
-    logger.info(f"🕒 Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info(f"🔒 Deployment stealth mode: {'ACTIVE' if IS_RENDER else 'OFF'}")
     
-    try:
-        if webhook_url:
-            # Webhook mode (for Render)
-            logger.info(f"🌐 Starting webhook on port {PORT}")
-            logger.info(f"🔗 Webhook URL: {webhook_url}")
-            app.run_webhook(
-                listen="0.0.0.0",
-                port=PORT,
-                webhook_url=webhook_url,
-                drop_pending_updates=True
-            )
-        else:
-            # Polling mode (for local development)
-            logger.info("📡 Starting in polling mode...")
-            app.run_polling(allowed_updates=Update.ALL_TYPES)
+    if webhook_url:
+        # Webhook mode (for Render)
+        logger.info(f"🌐 Starting webhook on port {PORT}")
+        logger.info(f"🔗 Webhook URL: {webhook_url}")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            webhook_url=webhook_url,
+            drop_pending_updates=True
+        )
+    else:
+        # Polling mode (for local development)
+        logger.info("📡 Starting in polling mode...")
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+def main():
+    # Import Flask's development server
+    from werkzeug.serving import run_simple
     
-    except Exception as e:
-        logger.error(f"❌ Fatal error: {e}")
-        sys.exit(1)
+    # Signal handlers
+    def signal_handler(sig, frame):
+        logger.info("🛑 Shutting down...")
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Start Flask in a separate thread
+    import threading
+    flask_thread = threading.Thread(target=lambda: run_simple(
+        "0.0.0.0", PORT, flask_app, use_reloader=False, use_debugger=False
+    ))
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    logger.info(f"🌐 Health check available at http://0.0.0.0:{PORT}/")
+    logger.info(f"🌐 Health check available at http://0.0.0.0:{PORT}/health")
+    
+    # Run the bot
+    run_bot()
 
 if __name__ == "__main__":
     main()
