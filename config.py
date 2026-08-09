@@ -3,15 +3,16 @@ import os
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8107617495:AAEjCpxJ0qVmG1m7C5rzAU_maM2t9IlnUJs")
 FISH_API_KEY = os.environ.get("FISH_API_KEY", "sk-fish-2IfHrnq1IG3lhnGoCFVbiNwRrdoR_yM4OXZEb7KfO_g")
 
-BOT_NAME = "Bisaya Studio Session 😂"
+BOT_NAME = "VoiceStudio Pro"
 DEV_NAME = "J 🧃"
-DEV_ALIAS = "Jews / bai holden hiscock"
+DEV_ALIAS = "Jews"
 MAX_CHARS = 5000
 PORT = int(os.environ.get("PORT", 8080))
 
-VOICES_FILE = "all_voices.json"
-MAX_VOICES = 999
+VOICES_FILE = "all_models.json"
+MAX_VOICES = 999  # Load ALL voices from JSON
 
+# ========== DEFAULT VOICES (Always Available) ==========
 DEFAULT_VOICES = {
     "studio_pro": {
         "name": "Studio Pro",
@@ -36,6 +37,18 @@ DEFAULT_VOICES = {
         "reference_id": "b347db033a6549378b48d00acb0d06cd",
         "emoji": "🌊",
         "description": "Soft, gentle, soothing voice"
+    },
+    "dave_deep_media": {
+        "name": "Dave - Male Deep Voice",
+        "reference_id": "0dd3903013144408b29b7e74ca9e8614",
+        "emoji": "👨",
+        "description": "Male · English · Deep voice for Media and AI"
+    },
+    "ramsey_dave": {
+        "name": "ramsey dave",
+        "reference_id": "0eb1c3a354fc4c0aad24570fdb437746",
+        "emoji": "👨",
+        "description": "Male · English · Confident, authoritative, educational"
     }
 }
 
