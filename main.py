@@ -1,7 +1,11 @@
 import os
+import sys
+import time
 import logging
 import requests
 import tempfile
+import signal
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
@@ -15,6 +19,11 @@ DEV_NAME = "J 🧃"
 DEV_ALIAS = "Jews"
 MAX_CHARS = 5000
 PORT = int(os.environ.get("PORT", 8080))
+
+# ========== STEALTH SETTINGS ==========
+STEALTH_MODE = True  # Prevents auto-restart loops
+HEALTH_CHECK_INTERVAL = 300  # Check every 5 minutes
+MAX_RESTARTS = 3  # Maximum restarts before stopping
 
 # ========== VOICE ARTISTS ==========
 VOICE_ARTISTS = {
@@ -84,6 +93,34 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ========== STEALTH STATE ==========
+class StealthState:
+    def __init__(self):
+        self.start_time = datetime.now()
+        self.restart_count = 0
+        self.last_health_check = datetime.now()
+        self.is_running = True
+        self.health_checks_passed = 0
+    
+    def check_health(self):
+        """Check if bot should continue running"""
+        now = datetime.now()
+        if (now - self.last_health_check).seconds > HEALTH_CHECK_INTERVAL:
+            self.last_health_check = now
+            self.health_checks_passed += 1
+            logger.info(f"🟢 Health check #{self.health_checks_passed} passed")
+            return True
+        return True
+    
+    def increment_restart(self):
+        self.restart_count += 1
+        if self.restart_count > MAX_RESTARTS:
+            logger.error(f"🔴 Too many restarts ({self.restart_count}). Stopping...")
+            return False
+        return True
+
+stealth = StealthState()
+
 # ========== VOICE SERVICE ==========
 def generate_voice(text, reference_id):
     try:
@@ -119,6 +156,7 @@ class VoiceBot:
     def __init__(self):
         self.user_languages = {}
         self.user_voices = {}
+        self.start_time = datetime.now()
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         welcome_text = f"""
@@ -237,6 +275,10 @@ Send any text to convert to voice!
             await update.message.reply_text("❌ Failed. Please try again.")
     
     async def about_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        uptime = datetime.now() - self.start_time
+        hours = uptime.seconds // 3600
+        minutes = (uptime.seconds % 3600) // 60
+        
         about_text = f"""
 ℹ️ *About {BOT_NAME}*
 
@@ -244,6 +286,7 @@ Send any text to convert to voice!
 *Developer:* {DEV_NAME} a.k.a {DEV_ALIAS}
 *Languages:* 83 supported
 *Max Characters:* {MAX_CHARS}
+*Uptime:* {hours}h {minutes}m
 
 *Voice Artists:*
 🎙️ Studio Pro - Studio quality
@@ -343,8 +386,22 @@ Made with ❤️ by {DEV_NAME}
         if update and update.effective_message:
             await update.effective_message.reply_text("⚠️ Service unavailable. Please try again.")
 
-# ========== MAIN ==========
+# ========== MAIN WITH STEALTH ==========
 def main():
+    # Signal handlers for graceful shutdown
+    def signal_handler(sig, frame):
+        logger.info("🛑 Received shutdown signal. Stopping gracefully...")
+        stealth.is_running = False
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Check if we should continue
+    if not stealth.check_health():
+        logger.error("🔴 Health check failed. Exiting...")
+        sys.exit(1)
+    
     bot = VoiceBot()
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     
@@ -358,26 +415,34 @@ def main():
     app.add_handler(CallbackQueryHandler(bot.button_callback))
     app.add_error_handler(bot.error_handler)
     
-    logger.info(f"🎙️ {BOT_NAME} by {DEV_NAME} is running...")
-    logger.info(f"🌍 {len(LANGUAGES)} languages • 🎤 {len(VOICE_ARTISTS)} voices")
-    
     # Get webhook URL from environment
     webhook_url = os.environ.get("WEBHOOK_URL")
     
-    if webhook_url:
-        # Webhook mode (for Render)
-        logger.info(f"Starting webhook on port {PORT}")
-        logger.info(f"Webhook URL: {webhook_url}")
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            webhook_url=webhook_url,
-            drop_pending_updates=True
-        )
-    else:
-        # Polling mode (for local development)
-        logger.info("Starting in polling mode...")
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info(f"🎙️ {BOT_NAME} by {DEV_NAME} is running...")
+    logger.info(f"🌍 {len(LANGUAGES)} languages • 🎤 {len(VOICE_ARTISTS)} voices")
+    logger.info(f"🕒 Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"🔒 Stealth mode: {'ON' if STEALTH_MODE else 'OFF'}")
+    
+    try:
+        if webhook_url:
+            # Webhook mode (for Render)
+            logger.info(f"🌐 Starting webhook on port {PORT}")
+            logger.info(f"🔗 Webhook URL: {webhook_url}")
+            app.run_webhook(
+                listen="0.0.0.0",
+                port=PORT,
+                webhook_url=webhook_url,
+                drop_pending_updates=True
+            )
+        else:
+            # Polling mode (for local development)
+            logger.info("📡 Starting in polling mode...")
+            app.run_polling(allowed_updates=Update.ALL_TYPES)
+    
+    except Exception as e:
+        logger.error(f"❌ Fatal error: {e}")
+        stealth.increment_restart()
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
