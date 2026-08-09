@@ -32,34 +32,48 @@ logger = logging.getLogger(__name__)
 
 def load_voices_from_json():
     try:
+        # Start with DEFAULT_VOICES (always available)
+        voice_artists = dict(DEFAULT_VOICES)
+        
         if os.path.exists(VOICES_FILE):
             with open(VOICES_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 voices_data = data.get('voices', [])
-                voice_artists = {}
+                
+                # Add JSON voices
+                json_count = 0
                 for i, voice in enumerate(voices_data[:MAX_VOICES]):
                     voice_id = voice.get('id', '')
                     title = voice.get('title', f'Voice {i+1}')
                     language = voice.get('language', 'Unknown')
                     gender = voice.get('gender', 'Unknown')
                     description = voice.get('description', f'{gender} voice in {language}')
+                    
+                    # Skip if voice already exists in defaults (avoid duplicates)
+                    if any(v.get('reference_id') == voice_id for v in voice_artists.values()):
+                        continue
+                    
                     emoji = "🎙️"
                     if gender.lower() in ['male', 'm']:
                         emoji = "👨"
                     elif gender.lower() in ['female', 'f']:
                         emoji = "👩"
-                    key = f"voice_{i+1}"
+                    
+                    key = f"json_voice_{i+1}"
                     voice_artists[key] = {
                         "name": title[:30],
                         "reference_id": voice_id,
                         "emoji": emoji,
                         "description": f"{gender} · {language} · {description[:50]}",
-                        "full_data": voice
+                        "full_data": voice,
+                        "is_default": False
                     }
-                logger.info(f"Loaded {len(voice_artists)} voices from {VOICES_FILE}")
+                    json_count += 1
+                
+                logger.info(f"Loaded {len(DEFAULT_VOICES)} default voices + {json_count} JSON voices")
                 return voice_artists
         else:
-            logger.warning(f"{VOICES_FILE} not found. Using default voices.")
+            logger.warning(f"{VOICES_FILE} not found. Using default voices only.")
             return DEFAULT_VOICES
     except Exception as e:
         logger.error(f"Error loading voices: {e}")
@@ -132,27 +146,52 @@ class VoiceBot:
         await update.message.reply_text(welcome_text, parse_mode='Markdown')
 
     async def voices_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """List all voices - defaults shown first with ⭐"""
         voices_text = f"🎤 *Available Voices ({len(VOICE_ARTISTS)} total)*\n\n"
-        for key, voice in list(VOICE_ARTISTS.items())[:20]:
-            voices_text += f"{voice['emoji']} *{voice['name']}*\n"
-            voices_text += f"   {voice['description']}\n\n"
-        if len(VOICE_ARTISTS) > 20:
-            voices_text += f"... and {len(VOICE_ARTISTS) - 20} more voices\n"
-        voices_text += f"\nUse /voice to change your voice."
+        
+        # Show default voices first with ⭐
+        default_count = 0
+        for key, voice in VOICE_ARTISTS.items():
+            if key in DEFAULT_VOICES:
+                default_count += 1
+                voices_text += f"⭐ {voice['emoji']} *{voice['name']}* (Default)\n"
+                voices_text += f"   {voice['description']}\n\n"
+        
+        # Show JSON voices
+        json_count = 0
+        for key, voice in VOICE_ARTISTS.items():
+            if key not in DEFAULT_VOICES:
+                if json_count < 20:  # Limit to 20 JSON voices to avoid spam
+                    voices_text += f"   {voice['emoji']} {voice['name']}\n"
+                json_count += 1
+        
+        if json_count > 20:
+            voices_text += f"... and {json_count - 20} more voices from library\n"
+        
+        voices_text += f"\n⭐ = Default Voice (always available)"
+        voices_text += f"\n📌 Use /voice to browse all voices with pagination"
         await update.message.reply_text(voices_text, parse_mode='Markdown')
 
     async def show_search_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: str, page: int, query: str):
-        """Show search results page with pagination"""
+        """Show search results - defaults shown first"""
         if user_id in self.search_results and self.search_results[user_id] and self.search_results[user_id].get('query') == query:
             results = self.search_results[user_id]['results']
         else:
             results = []
             query_lower = query.lower()
+            
+            # Search defaults first
             for key, voice in VOICE_ARTISTS.items():
                 name = voice['name'].lower()
                 desc = voice['description'].lower()
                 if query_lower in name or query_lower in desc:
-                    results.append((key, voice))
+                    # Check if default
+                    is_default = key in DEFAULT_VOICES
+                    results.append((key, voice, is_default))
+            
+            # Sort: defaults first, then by name
+            results.sort(key=lambda x: (not x[2], x[1]['name'].lower()))
+            
             self.search_results[user_id] = {
                 'query': query,
                 'results': results
@@ -184,9 +223,10 @@ class VoiceBot:
         end_idx = min(start_idx + items_per_page, len(results))
         
         keyboard = []
-        for key, voice in results[start_idx:end_idx]:
+        for key, voice, is_default in results[start_idx:end_idx]:
+            label = f"{'⭐ ' if is_default else ''}{voice['emoji']} {voice['name']}"
             keyboard.append([InlineKeyboardButton(
-                f"{voice['emoji']} {voice['name']}",
+                label,
                 callback_data=f"search_select_{key}"
             )])
         
@@ -202,13 +242,16 @@ class VoiceBot:
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
+        # Build message with default indicator
         text = f"🔍 *Search Results for \"{query}\"*\n\n"
-        text += f"Found {len(results)} voices matching \"{query}\":\n"
+        text += f"Found {len(results)} voices:\n"
         text += f"Page {page + 1}/{total_pages}\n\n"
         
-        for key, voice in results[start_idx:end_idx]:
-            text += f"{voice['emoji']} *{voice['name']}*\n"
-            text += f"   {voice['description']}\n"
+        for key, voice, is_default in results[start_idx:end_idx]:
+            text += f"{'⭐ ' if is_default else ''}{voice['emoji']} *{voice['name']}*"
+            if is_default:
+                text += " *(Default)*"
+            text += f"\n   {voice['description']}\n"
             text += f"   📌 Click to select\n\n"
         
         if update.callback_query:
@@ -234,7 +277,8 @@ class VoiceBot:
                 "Type: `/search narrator`\n"
                 "Type: `/search female`\n"
                 "Type: `/search spanish`\n"
-                "Type: `/search deep voice`\n\n"
+                "Type: `/search dave`\n\n"
+                "⭐ Default voices are shown first!\n"
                 "Try searching for voice names, languages, or descriptions!\n"
                 "You can also browse all voices with `/voice`",
                 parse_mode='Markdown'
@@ -246,7 +290,7 @@ class VoiceBot:
 
     async def show_voice_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: str, page: int):
         voice_keys = list(VOICE_ARTISTS.keys())
-        current_voice = self.user_voices.get(user_id, voice_keys[0] if voice_keys else "studio_pro")
+        current_voice = self.user_voices.get(user_id, next(iter(DEFAULT_VOICES.keys())) if DEFAULT_VOICES else voice_keys[0] if voice_keys else "studio_pro")
         items_per_page = 10
         total_pages = (len(voice_keys) + items_per_page - 1) // items_per_page
         
@@ -263,8 +307,9 @@ class VoiceBot:
         for key in voice_keys[start_idx:end_idx]:
             voice = VOICE_ARTISTS[key]
             is_current = " ✅" if key == current_voice else ""
+            is_default = " ⭐" if key in DEFAULT_VOICES else ""
             keyboard.append([InlineKeyboardButton(
-                f"{voice['emoji']} {voice['name']}{is_current}",
+                f"{voice['emoji']} {voice['name']}{is_default}{is_current}",
                 callback_data=f"voice_{key}"
             )])
         
@@ -279,7 +324,14 @@ class VoiceBot:
         reply_markup = InlineKeyboardMarkup(keyboard)
         current = VOICE_ARTISTS.get(current_voice, list(VOICE_ARTISTS.values())[0] if VOICE_ARTISTS else {"name": "Unknown", "description": ""})
         
-        text = f"🎤 *Select Voice Artist*\n\nCurrent: {current['name']}\n{current['description']}\nPage {page + 1}/{total_pages}"
+        # Count defaults
+        default_count = len(DEFAULT_VOICES)
+        
+        text = f"🎤 *Select Voice Artist*\n\n"
+        text += f"Current: {current['name']}\n"
+        text += f"{current['description']}\n"
+        text += f"⭐ = Default Voice ({default_count} available)\n"
+        text += f"Page {page + 1}/{total_pages}"
         
         if update.callback_query:
             await update.callback_query.edit_message_text(
@@ -383,7 +435,7 @@ Add these tags to your text:
     async def sample_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
         voice_keys = list(VOICE_ARTISTS.keys())
-        voice_key = self.user_voices.get(user_id, voice_keys[0] if voice_keys else "studio_pro")
+        voice_key = self.user_voices.get(user_id, next(iter(DEFAULT_VOICES.keys())) if DEFAULT_VOICES else voice_keys[0] if voice_keys else "studio_pro")
         voice = VOICE_ARTISTS.get(voice_key, list(VOICE_ARTISTS.values())[0] if VOICE_ARTISTS else {"name": "Studio Pro", "reference_id": "95496a7632a14321891943545846c31c"})
         lang = self.user_languages.get(user_id, "en")
         lang_name = LANGUAGES.get(lang, "English")
@@ -411,6 +463,8 @@ Add these tags to your text:
         uptime = datetime.now() - self.start_time
         hours = uptime.seconds // 3600
         minutes = (uptime.seconds % 3600) // 60
+        default_count = len(DEFAULT_VOICES)
+        total_count = len(VOICE_ARTISTS)
         about_text = f"""
 ℹ️ *About {BOT_NAME}*
 
@@ -418,13 +472,14 @@ Add these tags to your text:
 *Developer:* {DEV_NAME}
 *Languages:* 83 supported
 *Emotions:* 10 emotion tags
-*Voice Artists:* {len(VOICE_ARTISTS)} premium voices
+*Voice Artists:* {total_count} total
+*Default Voices:* {default_count} always available
 *Max Characters:* {MAX_CHARS}
 *Uptime:* {hours}h {minutes}m
 
 *Features:*
 • 83 languages with auto-detection
-• {len(VOICE_ARTISTS)} premium voice artists
+• {total_count} premium voice artists
 • 10 emotion expressions
 • Studio quality audio
 
@@ -439,7 +494,7 @@ Made with ❤️ by {DEV_NAME}
             await update.message.reply_text(f"⚠️ Text exceeds {MAX_CHARS} characters.")
             return
         voice_keys = list(VOICE_ARTISTS.keys())
-        voice_key = self.user_voices.get(user_id, voice_keys[0] if voice_keys else "studio_pro")
+        voice_key = self.user_voices.get(user_id, next(iter(DEFAULT_VOICES.keys())) if DEFAULT_VOICES else voice_keys[0] if voice_keys else "studio_pro")
         voice = VOICE_ARTISTS.get(voice_key, list(VOICE_ARTISTS.values())[0] if VOICE_ARTISTS else {"name": "Studio Pro", "reference_id": "95496a7632a14321891943545846c31c"})
         lang = self.user_languages.get(user_id, "en")
         lang_name = LANGUAGES.get(lang, "English")
@@ -480,8 +535,9 @@ Made with ❤️ by {DEV_NAME}
             if voice_key in VOICE_ARTISTS:
                 self.user_voices[user_id] = voice_key
                 voice = VOICE_ARTISTS[voice_key]
+                is_default = "⭐ Default Voice! " if voice_key in DEFAULT_VOICES else ""
                 await query.edit_message_text(
-                    f"✅ Voice changed to: {voice['emoji']} *{voice['name']}*\n{voice['description']}\n\nSend any text to hear this voice!",
+                    f"✅ Voice changed to: {voice['emoji']} *{voice['name']}*\n{is_default}{voice['description']}\n\nSend any text to hear this voice!",
                     parse_mode='Markdown'
                 )
             else:
@@ -525,8 +581,9 @@ Made with ❤️ by {DEV_NAME}
             if voice_key in VOICE_ARTISTS:
                 self.user_voices[user_id] = voice_key
                 voice = VOICE_ARTISTS[voice_key]
+                is_default = "⭐ Default Voice! " if voice_key in DEFAULT_VOICES else ""
                 await query.edit_message_text(
-                    f"✅ Voice changed to: {voice['emoji']} *{voice['name']}*\n{voice['description']}\n\nSend any text to hear this voice!",
+                    f"✅ Voice changed to: {voice['emoji']} *{voice['name']}*\n{is_default}{voice['description']}\n\nSend any text to hear this voice!",
                     parse_mode='Markdown'
                 )
             else:
@@ -576,13 +633,14 @@ Made with ❤️ by {DEV_NAME}
             await query.edit_message_text(all_langs, parse_mode='Markdown')
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        default_count = len(DEFAULT_VOICES)
         await update.message.reply_text(
             f"📋 *Commands*\n\n"
             f"/start - Welcome message\n"
             f"/help - This guide\n"
             f"/language - Set your language (83 options)\n"
-            f"/voice - Browse all voices ({len(VOICE_ARTISTS)} options)\n"
-            f"/search [name] - Search for voices by name or description\n"
+            f"/voice - Browse all voices ({len(VOICE_ARTISTS)} total)\n"
+            f"/search [name] - Search for voices (⭐ defaults first)\n"
             f"/voices - List all available voices\n"
             f"/emotions - Show emotion tags\n"
             f"/sample - Hear a demo in your language\n"
@@ -591,6 +649,7 @@ Made with ❤️ by {DEV_NAME}
             f"1. Set your language with /language\n"
             f"2. Choose your voice with /voice or /search\n"
             f"3. Send text with emotion tags!\n\n"
+            f"⭐ = Default Voice ({default_count} always available)\n\n"
             f"*Emotion Tags:*\n"
             f"[happy] 😊 [sad] 😢 [angry] 😠 [excited] 🤩\n"
             f"[calm] 😌 [laughing] 😂 [whispering] 🤫\n"
@@ -601,7 +660,6 @@ Made with ❤️ by {DEV_NAME}
 
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error: {context.error}")
-        # Only try to reply if update has a message or callback_query
         if update:
             if update.effective_message:
                 await update.effective_message.reply_text("⚠️ Service unavailable. Please try again.")
@@ -629,7 +687,7 @@ def run_bot():
 
     logger.info(f"🎙️ {BOT_NAME} by {DEV_NAME} is running...")
     logger.info(f"🌍 {len(LANGUAGES)} languages supported")
-    logger.info(f"🎤 {len(VOICE_ARTISTS)} voice artists available")
+    logger.info(f"🎤 {len(VOICE_ARTISTS)} voice artists available ({len(DEFAULT_VOICES)} defaults)")
     logger.info(f"😊 {len(EMOTIONS)} emotion tags")
 
     if webhook_url:
