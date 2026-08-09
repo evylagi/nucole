@@ -100,6 +100,8 @@ class VoiceBot:
         self.user_voices = {}
         self.user_languages = {}
         self.start_time = datetime.now()
+        self.voice_pages = {}
+        self.lang_pages = {}
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         welcome_text = f"""
@@ -144,7 +146,7 @@ class VoiceBot:
     async def language_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
         current_lang = self.user_languages.get(user_id, "en")
-        page = context.user_data.get('lang_page', 0)
+        page = self.lang_pages.get(user_id, 0)
         lang_codes = sorted(LANGUAGES.keys())
         items_per_page = 20
         total_pages = (len(lang_codes) + items_per_page - 1) // items_per_page
@@ -152,6 +154,7 @@ class VoiceBot:
             page = 0
         elif page >= total_pages:
             page = total_pages - 1
+        self.lang_pages[user_id] = page
         start_idx = page * items_per_page
         end_idx = min(start_idx + items_per_page, len(lang_codes))
         keyboard = []
@@ -182,13 +185,14 @@ class VoiceBot:
         user_id = str(update.effective_user.id)
         voice_keys = list(VOICE_ARTISTS.keys())
         current_voice = self.user_voices.get(user_id, voice_keys[0] if voice_keys else "studio_pro")
-        page = context.user_data.get('voice_page', 0)
+        page = self.voice_pages.get(user_id, 0)
         items_per_page = 10
         total_pages = (len(voice_keys) + items_per_page - 1) // items_per_page
         if page < 0:
             page = 0
         elif page >= total_pages:
             page = total_pages - 1
+        self.voice_pages[user_id] = page
         start_idx = page * items_per_page
         end_idx = min(start_idx + items_per_page, len(voice_keys))
         keyboard = []
@@ -344,13 +348,13 @@ Made with ❤️ by {DEV_NAME}
                 )
 
         elif data == "voice_page_next":
-            current_page = context.user_data.get('voice_page', 0)
-            context.user_data['voice_page'] = current_page + 1
+            current_page = self.voice_pages.get(user_id, 0)
+            self.voice_pages[user_id] = current_page + 1
             await self.voice_command(update, context)
 
         elif data == "voice_page_prev":
-            current_page = context.user_data.get('voice_page', 0)
-            context.user_data['voice_page'] = max(0, current_page - 1)
+            current_page = self.voice_pages.get(user_id, 0)
+            self.voice_pages[user_id] = max(0, current_page - 1)
             await self.voice_command(update, context)
 
         elif data.startswith("lang_") and not data.startswith("lang_page_"):
@@ -364,13 +368,13 @@ Made with ❤️ by {DEV_NAME}
                 )
 
         elif data == "lang_page_next":
-            current_page = context.user_data.get('lang_page', 0)
-            context.user_data['lang_page'] = current_page + 1
+            current_page = self.lang_pages.get(user_id, 0)
+            self.lang_pages[user_id] = current_page + 1
             await self.language_command(update, context)
 
         elif data == "lang_page_prev":
-            current_page = context.user_data.get('lang_page', 0)
-            context.user_data['lang_page'] = max(0, current_page - 1)
+            current_page = self.lang_pages.get(user_id, 0)
+            self.lang_pages[user_id] = max(0, current_page - 1)
             await self.language_command(update, context)
 
         elif data == "view_all_langs":
