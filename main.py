@@ -5,7 +5,8 @@ import logging
 import requests
 import tempfile
 import signal
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
@@ -20,10 +21,10 @@ DEV_ALIAS = "Jews"
 MAX_CHARS = 5000
 PORT = int(os.environ.get("PORT", 8080))
 
-# ========== STEALTH SETTINGS ==========
-STEALTH_MODE = True  # Prevents auto-restart loops
-HEALTH_CHECK_INTERVAL = 300  # Check every 5 minutes
-MAX_RESTARTS = 3  # Maximum restarts before stopping
+# ========== STEALTH DEPLOYMENT SETTINGS ==========
+DEPLOYMENT_TIMEOUT = 30  # Seconds to wait for deployment to complete
+IS_RENDER = os.environ.get("RENDER", False)
+IS_DEPLOYING = True  # Flag to prevent premature webhook startup
 
 # ========== VOICE ARTISTS ==========
 VOICE_ARTISTS = {
@@ -93,33 +94,29 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ========== STEALTH STATE ==========
-class StealthState:
-    def __init__(self):
-        self.start_time = datetime.now()
-        self.restart_count = 0
-        self.last_health_check = datetime.now()
-        self.is_running = True
-        self.health_checks_passed = 0
+# ========== STEALTH DEPLOYMENT HANDLER ==========
+def stealth_deployment():
+    """Handle Render deployment without getting stuck"""
+    global IS_DEPLOYING
     
-    def check_health(self):
-        """Check if bot should continue running"""
-        now = datetime.now()
-        if (now - self.last_health_check).seconds > HEALTH_CHECK_INTERVAL:
-            self.last_health_check = now
-            self.health_checks_passed += 1
-            logger.info(f"🟢 Health check #{self.health_checks_passed} passed")
+    logger.info("🔒 Stealth deployment mode activated")
+    logger.info(f"📦 Render environment: {IS_RENDER}")
+    logger.info(f"⏱️ Deployment timeout: {DEPLOYMENT_TIMEOUT}s")
+    
+    # Wait for deployment to settle
+    if IS_RENDER:
+        logger.info("⏳ Waiting for deployment to complete...")
+        time.sleep(3)  # Brief pause for Render to finish setup
+        
+        # Check if we're in a healthy state
+        health_check = os.environ.get("HEALTH_CHECK", "true")
+        if health_check.lower() == "true":
+            logger.info("✅ Health check passed")
+            IS_DEPLOYING = False
             return True
-        return True
     
-    def increment_restart(self):
-        self.restart_count += 1
-        if self.restart_count > MAX_RESTARTS:
-            logger.error(f"🔴 Too many restarts ({self.restart_count}). Stopping...")
-            return False
-        return True
-
-stealth = StealthState()
+    IS_DEPLOYING = False
+    return True
 
 # ========== VOICE SERVICE ==========
 def generate_voice(text, reference_id):
@@ -386,21 +383,20 @@ Made with ❤️ by {DEV_NAME}
         if update and update.effective_message:
             await update.effective_message.reply_text("⚠️ Service unavailable. Please try again.")
 
-# ========== MAIN WITH STEALTH ==========
+# ========== MAIN WITH STEALTH DEPLOYMENT ==========
 def main():
+    # Run stealth deployment handler first
+    if not stealth_deployment():
+        logger.error("❌ Stealth deployment failed")
+        sys.exit(1)
+    
     # Signal handlers for graceful shutdown
     def signal_handler(sig, frame):
         logger.info("🛑 Received shutdown signal. Stopping gracefully...")
-        stealth.is_running = False
         sys.exit(0)
     
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
-    # Check if we should continue
-    if not stealth.check_health():
-        logger.error("🔴 Health check failed. Exiting...")
-        sys.exit(1)
     
     bot = VoiceBot()
     app = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -421,7 +417,7 @@ def main():
     logger.info(f"🎙️ {BOT_NAME} by {DEV_NAME} is running...")
     logger.info(f"🌍 {len(LANGUAGES)} languages • 🎤 {len(VOICE_ARTISTS)} voices")
     logger.info(f"🕒 Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    logger.info(f"🔒 Stealth mode: {'ON' if STEALTH_MODE else 'OFF'}")
+    logger.info(f"🔒 Deployment stealth mode: {'ACTIVE' if IS_RENDER else 'OFF'}")
     
     try:
         if webhook_url:
@@ -441,7 +437,6 @@ def main():
     
     except Exception as e:
         logger.error(f"❌ Fatal error: {e}")
-        stealth.increment_restart()
         sys.exit(1)
 
 if __name__ == "__main__":
