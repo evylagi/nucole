@@ -7,7 +7,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 
 # ========== CONFIGURATION ==========
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8107617495:AAEjCpxJ0qVmG1m7C5rzAU_maM2t9IlnUJs")
-FISH_API_KEY = os.environ.get("FISH_API_KEY", "sk-fish-2IfHrnq1IG3lhnGoCFVbiNwRrdoR_yM4OXZEb7KfO_g)
+FISH_API_KEY = os.environ.get("FISH_API_KEY", "sk-fish-2IfHrnq1IG3lhnGoCFVbiNwRrdoR_yM4OXZEb7KfO_g")
 
 # ========== BOT SETTINGS ==========
 BOT_NAME = "VoiceStudio Pro"
