@@ -102,6 +102,8 @@ class VoiceBot:
         self.start_time = datetime.now()
         self.voice_pages = {}
         self.lang_pages = {}
+        self.search_pages = {}
+        self.search_results = {}
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         welcome_text = f"""
@@ -113,17 +115,13 @@ class VoiceBot:
 
 *How to use:*
 1. Set your language with /language
-2. Choose your voice with /voice
+2. Choose your voice with /voice or /search
 3. Send text with emotion tags!
-
-*Emotion Tags:*
-[happy] 😊 [sad] 😢 [angry] 😠 [excited] 🤩
-[calm] 😌 [laughing] 😂 [whispering] 🤫
-[serious] 😐 [friendly] 🤗 [neutral] 😐
 
 *Commands:*
 /language - Set your language
-/voice - Change voice artist
+/voice - Browse all voices
+/search [name] - Search for voices
 /emotions - Show emotion tags
 /sample - Hear a demo
 /voices - List all available voices
@@ -142,6 +140,121 @@ class VoiceBot:
             voices_text += f"... and {len(VOICE_ARTISTS) - 20} more voices\n"
         voices_text += f"\nUse /voice to change your voice."
         await update.message.reply_text(voices_text, parse_mode='Markdown')
+
+    async def show_search_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: str, page: int, query: str):
+        """Show search results page with pagination"""
+        # Get cached search results or perform new search
+        if user_id in self.search_results and self.search_results[user_id].get('query') == query:
+            results = self.search_results[user_id]['results']
+        else:
+            # Search for voices
+            results = []
+            query_lower = query.lower()
+            for key, voice in VOICE_ARTISTS.items():
+                name = voice['name'].lower()
+                desc = voice['description'].lower()
+                if query_lower in name or query_lower in desc:
+                    results.append((key, voice))
+            # Cache results
+            self.search_results[user_id] = {
+                'query': query,
+                'results': results
+            }
+        
+        if not results:
+            if update.callback_query:
+                await update.callback_query.edit_message_text(
+                    f"❌ No voices found for '{query}'\n\nTry different keywords!",
+                    parse_mode='Markdown'
+                )
+            else:
+                await update.message.reply_text(
+                    f"❌ No voices found for '{query}'\n\nTry different keywords!",
+                    parse_mode='Markdown'
+                )
+            return
+        
+        items_per_page = 5
+        total_pages = (len(results) + items_per_page - 1) // items_per_page
+        
+        if page < 0:
+            page = 0
+        elif page >= total_pages:
+            page = total_pages - 1
+        
+        self.search_pages[user_id] = page
+        start_idx = page * items_per_page
+        end_idx = min(start_idx + items_per_page, len(results))
+        
+        keyboard = []
+        for key, voice in results[start_idx:end_idx]:
+            button_text = f"{voice['emoji']} {voice['name']}"
+            keyboard.append([InlineKeyboardButton(
+                button_text,
+                callback_data=f"search_select_{key}"
+            )])
+            # Add description as a second line (just for display, not clickable)
+            # We'll show it in the message text instead
+        
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton("◀️ Previous", callback_data="search_page_prev"))
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton("Next ▶️", callback_data="search_page_next"))
+        if nav_row:
+            keyboard.append(nav_row)
+        
+        # Add back to voice button
+        keyboard.append([InlineKeyboardButton("🎤 Back to All Voices", callback_data="search_back_to_voice")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Build message
+        text = f"🔍 *Search Results for \"{query}\"*\n\n"
+        text += f"Found {len(results)} voices matching \"{query}\":\n"
+        text += f"Page {page + 1}/{total_pages}\n\n"
+        
+        for key, voice in results[start_idx:end_idx]:
+            text += f"{voice['emoji']} *{voice['name']}*\n"
+            text += f"   {voice['description']}\n"
+            text += f"   📌 Click to select\n\n"
+        
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                text,
+                parse_mode='Markdown',
+                reply_markup=reply_markup
+            )
+        else:
+            await update.message.reply_text(
+                text,
+                parse_mode='Markdown',
+                reply_markup=reply_markup
+            )
+
+    async def search_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Search for voices by name or description"""
+        user_id = str(update.effective_user.id)
+        
+        # Get search query from command
+        query = ' '.join(context.args) if context.args else ''
+        
+        if not query:
+            await update.message.reply_text(
+                "🔍 *How to search for voices:*\n\n"
+                "Type: `/search narrator`\n"
+                "Type: `/search female`\n"
+                "Type: `/search spanish`\n"
+                "Type: `/search deep voice`\n\n"
+                "Try searching for voice names, languages, or descriptions!\n"
+                "You can also browse all voices with `/voice`",
+                parse_mode='Markdown'
+            )
+            return
+        
+        # Clear old search cache and show results
+        self.search_results[user_id] = None
+        await self.show_search_page(update, context, user_id, 0, query)
 
     async def show_voice_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: str, page: int):
         voice_keys = list(VOICE_ARTISTS.keys())
@@ -373,11 +486,9 @@ Made with ❤️ by {DEV_NAME}
         user_id = str(update.effective_user.id)
         data = query.data
 
-        # Handle voice selection - FIXED
-        if data.startswith("voice_") and not data.startswith("voice_page_"):
-            voice_key = data.replace("voice_", "")
-            
-            # Check if the key exists directly
+        # Handle search voice selection
+        if data.startswith("search_select_"):
+            voice_key = data.replace("search_select_", "")
             if voice_key in VOICE_ARTISTS:
                 self.user_voices[user_id] = voice_key
                 voice = VOICE_ARTISTS[voice_key]
@@ -386,23 +497,57 @@ Made with ❤️ by {DEV_NAME}
                     parse_mode='Markdown'
                 )
             else:
-                # If not found directly, try to find a matching key
-                found = False
-                for key, v in VOICE_ARTISTS.items():
-                    if voice_key in key or key in voice_key:
-                        self.user_voices[user_id] = key
-                        await query.edit_message_text(
-                            f"✅ Voice changed to: {v['emoji']} *{v['name']}*\n{v['description']}\n\nSend any text to hear this voice!",
-                            parse_mode='Markdown'
-                        )
-                        found = True
-                        break
-                
-                if not found:
-                    await query.edit_message_text(
-                        "❌ Voice not found. Please try again.",
-                        parse_mode='Markdown'
-                    )
+                await query.edit_message_text(
+                    "❌ Voice not found. Please try again.",
+                    parse_mode='Markdown'
+                )
+
+        # Handle search page navigation
+        elif data == "search_page_next":
+            current_page = self.search_pages.get(user_id, 0)
+            new_page = current_page + 1
+            # Get the search query from cache
+            if user_id in self.search_results and self.search_results[user_id]:
+                query = self.search_results[user_id]['query']
+                await self.show_search_page(update, context, user_id, new_page, query)
+            else:
+                await query.edit_message_text(
+                    "❌ Search results expired. Please search again with /search",
+                    parse_mode='Markdown'
+                )
+
+        elif data == "search_page_prev":
+            current_page = self.search_pages.get(user_id, 0)
+            new_page = max(0, current_page - 1)
+            if user_id in self.search_results and self.search_results[user_id]:
+                query = self.search_results[user_id]['query']
+                await self.show_search_page(update, context, user_id, new_page, query)
+            else:
+                await query.edit_message_text(
+                    "❌ Search results expired. Please search again with /search",
+                    parse_mode='Markdown'
+                )
+
+        elif data == "search_back_to_voice":
+            # Go back to main voice browser
+            page = self.voice_pages.get(user_id, 0)
+            await self.show_voice_page(update, context, user_id, page)
+
+        # Handle voice selection
+        elif data.startswith("voice_") and not data.startswith("voice_page_"):
+            voice_key = data.replace("voice_", "")
+            if voice_key in VOICE_ARTISTS:
+                self.user_voices[user_id] = voice_key
+                voice = VOICE_ARTISTS[voice_key]
+                await query.edit_message_text(
+                    f"✅ Voice changed to: {voice['emoji']} *{voice['name']}*\n{voice['description']}\n\nSend any text to hear this voice!",
+                    parse_mode='Markdown'
+                )
+            else:
+                await query.edit_message_text(
+                    "❌ Voice not found. Please try again.",
+                    parse_mode='Markdown'
+                )
 
         # Handle voice page navigation
         elif data == "voice_page_next":
@@ -450,14 +595,15 @@ Made with ❤️ by {DEV_NAME}
             f"/start - Welcome message\n"
             f"/help - This guide\n"
             f"/language - Set your language (83 options)\n"
-            f"/voice - Change voice artist ({len(VOICE_ARTISTS)} options)\n"
+            f"/voice - Browse all voices ({len(VOICE_ARTISTS)} options)\n"
+            f"/search [name] - Search for voices by name or description\n"
             f"/voices - List all available voices\n"
             f"/emotions - Show emotion tags\n"
             f"/sample - Hear a demo in your language\n"
             f"/about - Bot info\n\n"
             f"*How to use:*\n"
             f"1. Set your language with /language\n"
-            f"2. Choose your voice with /voice\n"
+            f"2. Choose your voice with /voice or /search\n"
             f"3. Send text with emotion tags!\n\n"
             f"*Emotion Tags:*\n"
             f"[happy] 😊 [sad] 😢 [angry] 😠 [excited] 🤩\n"
@@ -480,6 +626,7 @@ def run_bot():
     app.add_handler(CommandHandler("help", bot.help_command))
     app.add_handler(CommandHandler("language", bot.language_command))
     app.add_handler(CommandHandler("voice", bot.voice_command))
+    app.add_handler(CommandHandler("search", bot.search_command))
     app.add_handler(CommandHandler("voices", bot.voices_command))
     app.add_handler(CommandHandler("emotions", bot.emotions_command))
     app.add_handler(CommandHandler("sample", bot.sample_command))
