@@ -7,7 +7,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 
 # ========== CONFIGURATION ==========
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8107617495:AAEjCpxJ0qVmG1m7C5rzAU_maM2t9IlnUJs")
-FISH_API_KEY = os.environ.get("FISH_API_KEY", "sk-fish-2IfHrnq1IG3lhnGoCFVbiNwRrdoR_yM4OXZEb7KfO_g")
+FISH_API_KEY = os.environ.get("FISH_API_KEY", "sk-fish-2IfHrnq1IG3lhnGoCFVbiNwRrdoR_yM4OXZEb7KfO_g)
 
 # ========== BOT SETTINGS ==========
 BOT_NAME = "VoiceStudio Pro"
@@ -361,15 +361,22 @@ def main():
     logger.info(f"🎙️ {BOT_NAME} by {DEV_NAME} is running...")
     logger.info(f"🌍 {len(LANGUAGES)} languages • 🎤 {len(VOICE_ARTISTS)} voices")
     
-    # Start webhook for Render or polling
-    if os.environ.get("RENDER"):
+    # Get webhook URL from environment
+    webhook_url = os.environ.get("WEBHOOK_URL")
+    
+    if webhook_url:
+        # Webhook mode (for Render)
         logger.info(f"Starting webhook on port {PORT}")
+        logger.info(f"Webhook URL: {webhook_url}")
         app.run_webhook(
             listen="0.0.0.0",
             port=PORT,
-            webhook_url=os.environ.get("WEBHOOK_URL")
+            webhook_url=webhook_url,
+            drop_pending_updates=True
         )
     else:
+        # Polling mode (for local development)
+        logger.info("Starting in polling mode...")
         app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
