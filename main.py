@@ -143,58 +143,22 @@ class VoiceBot:
         voices_text += f"\nUse /voice to change your voice."
         await update.message.reply_text(voices_text, parse_mode='Markdown')
 
-    async def language_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = str(update.effective_user.id)
-        current_lang = self.user_languages.get(user_id, "en")
-        page = self.lang_pages.get(user_id, 0)
-        lang_codes = sorted(LANGUAGES.keys())
-        items_per_page = 20
-        total_pages = (len(lang_codes) + items_per_page - 1) // items_per_page
-        if page < 0:
-            page = 0
-        elif page >= total_pages:
-            page = total_pages - 1
-        self.lang_pages[user_id] = page
-        start_idx = page * items_per_page
-        end_idx = min(start_idx + items_per_page, len(lang_codes))
-        keyboard = []
-        for code in lang_codes[start_idx:end_idx]:
-            if code in LANGUAGES:
-                is_current = " ✅" if code == current_lang else ""
-                keyboard.append([InlineKeyboardButton(
-                    f"{LANGUAGES[code]}{is_current}",
-                    callback_data=f"lang_{code}"
-                )])
-        nav_row = []
-        if page > 0:
-            nav_row.append(InlineKeyboardButton("◀️ Previous", callback_data="lang_page_prev"))
-        if page < total_pages - 1:
-            nav_row.append(InlineKeyboardButton("Next ▶️", callback_data="lang_page_next"))
-        if nav_row:
-            keyboard.append(nav_row)
-        keyboard.append([InlineKeyboardButton("📚 View All Languages", callback_data="view_all_langs")])
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        current_display = LANGUAGES.get(current_lang, "English")
-        await update.message.reply_text(
-            f"🌍 *Select Your Language*\n\nCurrent: {current_display}\nPage {page + 1}/{total_pages}",
-            parse_mode='Markdown',
-            reply_markup=reply_markup
-        )
-
-    async def voice_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = str(update.effective_user.id)
+    async def show_voice_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: str, page: int):
+        """Helper method to show voice page - works for both message and callback"""
         voice_keys = list(VOICE_ARTISTS.keys())
         current_voice = self.user_voices.get(user_id, voice_keys[0] if voice_keys else "studio_pro")
-        page = self.voice_pages.get(user_id, 0)
         items_per_page = 10
         total_pages = (len(voice_keys) + items_per_page - 1) // items_per_page
+        
         if page < 0:
             page = 0
         elif page >= total_pages:
             page = total_pages - 1
+        
         self.voice_pages[user_id] = page
         start_idx = page * items_per_page
         end_idx = min(start_idx + items_per_page, len(voice_keys))
+        
         keyboard = []
         for key in voice_keys[start_idx:end_idx]:
             voice = VOICE_ARTISTS[key]
@@ -203,6 +167,7 @@ class VoiceBot:
                 f"{voice['emoji']} {voice['name']}{is_current}",
                 callback_data=f"voice_{key}"
             )])
+        
         nav_row = []
         if page > 0:
             nav_row.append(InlineKeyboardButton("◀️ Previous", callback_data="voice_page_prev"))
@@ -210,13 +175,87 @@ class VoiceBot:
             nav_row.append(InlineKeyboardButton("Next ▶️", callback_data="voice_page_next"))
         if nav_row:
             keyboard.append(nav_row)
+        
         reply_markup = InlineKeyboardMarkup(keyboard)
         current = VOICE_ARTISTS.get(current_voice, list(VOICE_ARTISTS.values())[0] if VOICE_ARTISTS else {"name": "Unknown", "description": ""})
-        await update.message.reply_text(
-            f"🎤 *Select Voice Artist*\n\nCurrent: {current['name']}\n{current['description']}\nPage {page + 1}/{total_pages}",
-            parse_mode='Markdown',
-            reply_markup=reply_markup
-        )
+        
+        text = f"🎤 *Select Voice Artist*\n\nCurrent: {current['name']}\n{current['description']}\nPage {page + 1}/{total_pages}"
+        
+        # Check if this is a callback query or message
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                text,
+                parse_mode='Markdown',
+                reply_markup=reply_markup
+            )
+        else:
+            await update.message.reply_text(
+                text,
+                parse_mode='Markdown',
+                reply_markup=reply_markup
+            )
+
+    async def show_language_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: str, page: int):
+        """Helper method to show language page - works for both message and callback"""
+        current_lang = self.user_languages.get(user_id, "en")
+        lang_codes = sorted(LANGUAGES.keys())
+        items_per_page = 20
+        total_pages = (len(lang_codes) + items_per_page - 1) // items_per_page
+        
+        if page < 0:
+            page = 0
+        elif page >= total_pages:
+            page = total_pages - 1
+        
+        self.lang_pages[user_id] = page
+        start_idx = page * items_per_page
+        end_idx = min(start_idx + items_per_page, len(lang_codes))
+        
+        keyboard = []
+        for code in lang_codes[start_idx:end_idx]:
+            if code in LANGUAGES:
+                is_current = " ✅" if code == current_lang else ""
+                keyboard.append([InlineKeyboardButton(
+                    f"{LANGUAGES[code]}{is_current}",
+                    callback_data=f"lang_{code}"
+                )])
+        
+        nav_row = []
+        if page > 0:
+            nav_row.append(InlineKeyboardButton("◀️ Previous", callback_data="lang_page_prev"))
+        if page < total_pages - 1:
+            nav_row.append(InlineKeyboardButton("Next ▶️", callback_data="lang_page_next"))
+        if nav_row:
+            keyboard.append(nav_row)
+        
+        keyboard.append([InlineKeyboardButton("📚 View All Languages", callback_data="view_all_langs")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        current_display = LANGUAGES.get(current_lang, "English")
+        
+        text = f"🌍 *Select Your Language*\n\nCurrent: {current_display}\nPage {page + 1}/{total_pages}"
+        
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                text,
+                parse_mode='Markdown',
+                reply_markup=reply_markup
+            )
+        else:
+            await update.message.reply_text(
+                text,
+                parse_mode='Markdown',
+                reply_markup=reply_markup
+            )
+
+    async def language_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = str(update.effective_user.id)
+        page = self.lang_pages.get(user_id, 0)
+        await self.show_language_page(update, context, user_id, page)
+
+    async def voice_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = str(update.effective_user.id)
+        page = self.voice_pages.get(user_id, 0)
+        await self.show_voice_page(update, context, user_id, page)
 
     async def emotions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         emotions_text = """
@@ -337,6 +376,7 @@ Made with ❤️ by {DEV_NAME}
         user_id = str(update.effective_user.id)
         data = query.data
 
+        # Handle voice selection
         if data.startswith("voice_") and not data.startswith("voice_page_"):
             voice_key = data.replace("voice_", "")
             if voice_key in VOICE_ARTISTS:
@@ -347,16 +387,18 @@ Made with ❤️ by {DEV_NAME}
                     parse_mode='Markdown'
                 )
 
+        # Handle voice page navigation
         elif data == "voice_page_next":
             current_page = self.voice_pages.get(user_id, 0)
-            self.voice_pages[user_id] = current_page + 1
-            await self.voice_command(update, context)
+            new_page = current_page + 1
+            await self.show_voice_page(update, context, user_id, new_page)
 
         elif data == "voice_page_prev":
             current_page = self.voice_pages.get(user_id, 0)
-            self.voice_pages[user_id] = max(0, current_page - 1)
-            await self.voice_command(update, context)
+            new_page = max(0, current_page - 1)
+            await self.show_voice_page(update, context, user_id, new_page)
 
+        # Handle language selection
         elif data.startswith("lang_") and not data.startswith("lang_page_"):
             lang_code = data.replace("lang_", "")
             if lang_code in LANGUAGES:
@@ -367,15 +409,16 @@ Made with ❤️ by {DEV_NAME}
                     parse_mode='Markdown'
                 )
 
+        # Handle language page navigation
         elif data == "lang_page_next":
             current_page = self.lang_pages.get(user_id, 0)
-            self.lang_pages[user_id] = current_page + 1
-            await self.language_command(update, context)
+            new_page = current_page + 1
+            await self.show_language_page(update, context, user_id, new_page)
 
         elif data == "lang_page_prev":
             current_page = self.lang_pages.get(user_id, 0)
-            self.lang_pages[user_id] = max(0, current_page - 1)
-            await self.language_command(update, context)
+            new_page = max(0, current_page - 1)
+            await self.show_language_page(update, context, user_id, new_page)
 
         elif data == "view_all_langs":
             all_langs = "🌍 *All 83 Languages*\n\n"
