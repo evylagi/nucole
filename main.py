@@ -144,7 +144,6 @@ class VoiceBot:
         await update.message.reply_text(voices_text, parse_mode='Markdown')
 
     async def show_voice_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: str, page: int):
-        """Helper method to show voice page - works for both message and callback"""
         voice_keys = list(VOICE_ARTISTS.keys())
         current_voice = self.user_voices.get(user_id, voice_keys[0] if voice_keys else "studio_pro")
         items_per_page = 10
@@ -181,7 +180,6 @@ class VoiceBot:
         
         text = f"🎤 *Select Voice Artist*\n\nCurrent: {current['name']}\n{current['description']}\nPage {page + 1}/{total_pages}"
         
-        # Check if this is a callback query or message
         if update.callback_query:
             await update.callback_query.edit_message_text(
                 text,
@@ -196,7 +194,6 @@ class VoiceBot:
             )
 
     async def show_language_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: str, page: int):
-        """Helper method to show language page - works for both message and callback"""
         current_lang = self.user_languages.get(user_id, "en")
         lang_codes = sorted(LANGUAGES.keys())
         items_per_page = 20
@@ -376,16 +373,36 @@ Made with ❤️ by {DEV_NAME}
         user_id = str(update.effective_user.id)
         data = query.data
 
-        # Handle voice selection
+        # Handle voice selection - FIXED
         if data.startswith("voice_") and not data.startswith("voice_page_"):
             voice_key = data.replace("voice_", "")
+            
+            # Check if the key exists directly
             if voice_key in VOICE_ARTISTS:
                 self.user_voices[user_id] = voice_key
                 voice = VOICE_ARTISTS[voice_key]
                 await query.edit_message_text(
-                    f"✅ Voice changed to: {voice['emoji']} *{voice['name']}*\n{voice['description']}",
+                    f"✅ Voice changed to: {voice['emoji']} *{voice['name']}*\n{voice['description']}\n\nSend any text to hear this voice!",
                     parse_mode='Markdown'
                 )
+            else:
+                # If not found directly, try to find a matching key
+                found = False
+                for key, v in VOICE_ARTISTS.items():
+                    if voice_key in key or key in voice_key:
+                        self.user_voices[user_id] = key
+                        await query.edit_message_text(
+                            f"✅ Voice changed to: {v['emoji']} *{v['name']}*\n{v['description']}\n\nSend any text to hear this voice!",
+                            parse_mode='Markdown'
+                        )
+                        found = True
+                        break
+                
+                if not found:
+                    await query.edit_message_text(
+                        "❌ Voice not found. Please try again.",
+                        parse_mode='Markdown'
+                    )
 
         # Handle voice page navigation
         elif data == "voice_page_next":
