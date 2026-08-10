@@ -6,111 +6,23 @@ import tempfile
 import signal
 import json
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from config import (
+    TELEGRAM_TOKEN, FISH_API_KEY, BOT_NAME, DEV_NAME, DEV_ALIAS,
+    MAX_CHARS, PORT, VOICES_FILE, MAX_VOICES, DEFAULT_VOICES, EMOTIONS, LANGUAGES
+)
 
-# ============ CONFIG ============
+flask_app = Flask(__name__)
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8107617495:AAEjCpxJ0qVmG1m7C5rzAU_maM2t9IlnUJs")
-FISH_API_KEY = os.environ.get("FISH_API_KEY", "sk-fish-2IfHrnq1IG3lhnGoCFVbiNwRrdoR_yM4OXZEb7KfO_g")
+@flask_app.route('/')
+def health_check():
+    return "Bot is running!", 200
 
-BOT_NAME = "VoiceStudio Pro"
-DEV_NAME = "J 🧃"
-DEV_ALIAS = "Jews"
-MAX_CHARS = 5000
-PORT = int(os.environ.get("PORT", 8080))
-
-VOICES_FILE = "all_voices.json"
-MAX_VOICES = 999
-
-DEFAULT_VOICES = {
-    "studio_pro": {
-        "name": "Studio Pro",
-        "reference_id": "95496a7632a14321891943545846c31c",
-        "emoji": "🎙️",
-        "description": "Professional studio quality voice"
-    },
-    "dave": {
-        "name": "Dave",
-        "reference_id": "08bc8442f20945b4a7bce5bde11f2505",
-        "emoji": "👨",
-        "description": "Clear, serious, informative male voice"
-    },
-    "deep_dave": {
-        "name": "Deep Dave",
-        "reference_id": "5d992f2f63074d31a99413fdb157a565",
-        "emoji": "🧘",
-        "description": "Deep, meditative, calm male voice"
-    },
-    "calm": {
-        "name": "Calm Voice",
-        "reference_id": "b347db033a6549378b48d00acb0d06cd",
-        "emoji": "🌊",
-        "description": "Soft, gentle, soothing voice"
-    },
-    "dave_deep_media": {
-        "name": "Dave - Male Deep Voice",
-        "reference_id": "0dd3903013144408b29b7e74ca9e8614",
-        "emoji": "👨",
-        "description": "Male · English · Deep voice for Media and AI"
-    },
-    "ramsey_dave": {
-        "name": "ramsey dave",
-        "reference_id": "0eb1c3a354fc4c0aad24570fdb437746",
-        "emoji": "👨",
-        "description": "Male · English · Confident, authoritative, educational"
-    }
-}
-
-EMOTIONS = {
-    "happy": "[happy]",
-    "sad": "[sad]",
-    "angry": "[angry]",
-    "excited": "[excited]",
-    "calm": "[calm]",
-    "laughing": "[laughing]",
-    "whispering": "[whispering]",
-    "serious": "[serious]",
-    "friendly": "[friendly]",
-    "neutral": "[neutral]"
-}
-
-LANGUAGES = {
-    "af": "🇿🇦 Afrikaans", "am": "🇪🇹 Amharic", "ar": "🇸🇦 Arabic",
-    "as": "🇮🇳 Assamese", "az": "🇦🇿 Azerbaijani", "be": "🇧🇾 Belarusian",
-    "bg": "🇧🇬 Bulgarian", "bn": "🇧🇩 Bengali", "bodo": "🇮🇳 Bodo",
-    "bs": "🇧🇦 Bosnian", "ca": "🇪🇸 Catalan", "cs": "🇨🇿 Czech",
-    "cy": "🇬🇧 Welsh", "da": "🇩🇰 Danish", "de": "🇩🇪 German",
-    "doi": "🇮🇳 Dogri", "el": "🇬🇷 Greek", "en": "🇬🇧 English",
-    "es": "🇪🇸 Spanish", "et": "🇪🇪 Estonian", "eu": "🇪🇸 Basque",
-    "fa": "🇮🇷 Persian", "fi": "🇫🇮 Finnish", "fil": "🇵🇭 Filipino",
-    "fr": "🇫🇷 French", "ga": "🇮🇪 Irish", "gl": "🇪🇸 Galician",
-    "gu": "🇮🇳 Gujarati", "he": "🇮🇱 Hebrew", "hi": "🇮🇳 Hindi",
-    "hr": "🇭🇷 Croatian", "hu": "🇭🇺 Hungarian", "hy": "🇦🇲 Armenian",
-    "id": "🇮🇩 Indonesian", "is": "🇮🇸 Icelandic", "it": "🇮🇹 Italian",
-    "ja": "🇯🇵 Japanese", "ka": "🇬🇪 Georgian", "kk": "🇰🇿 Kazakh",
-    "km": "🇰🇭 Khmer", "kn": "🇮🇳 Kannada", "ko": "🇰🇷 Korean",
-    "kok": "🇮🇳 Konkani", "ks": "🇮🇳 Kashmiri", "lo": "🇱🇦 Lao",
-    "lt": "🇱🇹 Lithuanian", "lv": "🇱🇻 Latvian", "mai": "🇮🇳 Maithili",
-    "mk": "🇲🇰 Macedonian", "ml": "🇮🇳 Malayalam", "mn": "🇲🇳 Mongolian",
-    "mni": "🇮🇳 Manipuri", "mr": "🇮🇳 Marathi", "ms": "🇲🇾 Malay",
-    "my": "🇲🇲 Burmese", "nb": "🇳🇴 Norwegian", "ne": "🇳🇵 Nepali",
-    "nl": "🇳🇱 Dutch", "or": "🇮🇳 Odia", "pa": "🇮🇳 Punjabi",
-    "pl": "🇵🇱 Polish", "ps": "🇦🇫 Pashto", "pt": "🇵🇹 Portuguese",
-    "ro": "🇷🇴 Romanian", "ru": "🇷🇺 Russian", "sat": "🇮🇳 Santali",
-    "sd": "🇵🇰 Sindhi", "si": "🇱🇰 Sinhala", "sk": "🇸🇰 Slovak",
-    "sl": "🇸🇮 Slovenian", "sq": "🇦🇱 Albanian", "sr": "🇷🇸 Serbian",
-    "sv": "🇸🇪 Swedish", "sw": "🇹🇿 Swahili", "ta": "🇮🇳 Tamil",
-    "te": "🇮🇳 Telugu", "tg": "🇹🇯 Tajik", "th": "🇹🇭 Thai",
-    "tk": "🇹🇲 Turkmen", "tr": "🇹🇷 Turkish", "uk": "🇺🇦 Ukrainian",
-    "ur": "🇵🇰 Urdu", "uz": "🇺🇿 Uzbek", "vi": "🇻🇳 Vietnamese",
-    "xh": "🇿🇦 Xhosa", "zh": "🇨🇳 Chinese", "zu": "🇿🇦 Zulu"
-}
-
-# ============ FLASK APP ============
-
-app = Flask(__name__)
+@flask_app.route('/health')
+def health():
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}, 200
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -118,76 +30,73 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ============ VOICE LOADER ============
-
 def load_voices_from_json():
     try:
         voice_artists = dict(DEFAULT_VOICES)
-        logger.info(f"Loaded {len(DEFAULT_VOICES)} default voices")
+        logger.info(f"✅ Loaded {len(DEFAULT_VOICES)} default voices")
         
-        for voices_file in ["all_models.json", "all_voices.json"]:
-            if os.path.exists(voices_file):
-                logger.info(f"Loading voices from {voices_file}...")
+        if os.path.exists(VOICES_FILE):
+            logger.info(f"📂 Loading voices from {VOICES_FILE}...")
+            
+            with open(VOICES_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
                 
-                with open(voices_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    
-                    if 'models' in data:
-                        voices_data = data.get('models', [])
-                    elif 'voices' in data:
-                        voices_data = data.get('voices', [])
-                    else:
-                        voices_data = data.get('items', [])
-                    
-                    if not voices_data:
+                if 'models' in data:
+                    voices_data = data.get('models', [])
+                elif 'voices' in data:
+                    voices_data = data.get('voices', [])
+                else:
+                    voices_data = data.get('items', [])
+                
+                if not voices_data:
+                    logger.warning(f"⚠️ No voices found in {VOICES_FILE}")
+                    return voice_artists
+                
+                logger.info(f"📊 Found {len(voices_data)} voices in JSON file")
+                
+                json_count = 0
+                for i, voice in enumerate(voices_data[:MAX_VOICES]):
+                    voice_id = voice.get('_id') or voice.get('id') or voice.get('reference_id')
+                    if not voice_id:
                         continue
                     
-                    logger.info(f"Found {len(voices_data)} voices in {voices_file}")
+                    title = voice.get('title') or voice.get('name') or f'Voice {i+1}'
+                    language = voice.get('language', 'Unknown')
+                    gender = voice.get('gender', 'Unknown')
+                    description = voice.get('description', f'{gender} voice in {language}')
                     
-                    json_count = 0
-                    for i, voice in enumerate(voices_data[:MAX_VOICES]):
-                        voice_id = voice.get('id') or voice.get('_id') or voice.get('reference_id')
-                        if not voice_id:
-                            continue
-                        
-                        title = voice.get('title') or voice.get('name') or f'Voice {i+1}'
-                        language = voice.get('language', 'Unknown')
-                        gender = voice.get('gender', 'Unknown')
-                        description = voice.get('description', f'{gender} voice in {language}')
-                        
-                        if any(v.get('reference_id') == voice_id for v in voice_artists.values()):
-                            continue
-                        
-                        emoji = "🎙️"
-                        if gender.lower() in ['male', 'm']:
-                            emoji = "👨"
-                        elif gender.lower() in ['female', 'f']:
-                            emoji = "👩"
-                        
-                        key = f"json_voice_{i+1}"
-                        voice_artists[key] = {
-                            "name": title[:30],
-                            "reference_id": voice_id,
-                            "emoji": emoji,
-                            "description": f"{gender} · {language} · {description[:50]}",
-                            "full_data": voice,
-                            "is_default": False
-                        }
-                        json_count += 1
+                    if any(v.get('reference_id') == voice_id for v in voice_artists.values()):
+                        continue
                     
-                    logger.info(f"Added {json_count} voices from {voices_file}")
-                    break
-        
-        logger.info(f"Total voices: {len(voice_artists)}")
-        return voice_artists
+                    emoji = "🎙️"
+                    if gender.lower() in ['male', 'm']:
+                        emoji = "👨"
+                    elif gender.lower() in ['female', 'f']:
+                        emoji = "👩"
+                    
+                    key = f"json_voice_{i+1}"
+                    voice_artists[key] = {
+                        "name": title[:30],
+                        "reference_id": voice_id,
+                        "emoji": emoji,
+                        "description": f"{gender} · {language} · {description[:50]}",
+                        "full_data": voice,
+                        "is_default": False
+                    }
+                    json_count += 1
+                
+                logger.info(f"✅ Added {json_count} voices from JSON")
+                logger.info(f"🎤 Total voices: {len(voice_artists)}")
+                return voice_artists
+        else:
+            logger.warning(f"⚠️ {VOICES_FILE} not found. Using default voices only.")
+            return voice_artists
             
     except Exception as e:
-        logger.error(f"Error loading voices: {e}")
+        logger.error(f"❌ Error loading voices: {e}")
         return DEFAULT_VOICES
 
 VOICE_ARTISTS = load_voices_from_json()
-
-# ============ VOICE GENERATOR ============
 
 def generate_voice(text, reference_id):
     try:
@@ -216,8 +125,6 @@ def generate_voice(text, reference_id):
     except Exception as e:
         logger.error(f"Error: {e}")
         return None
-
-# ============ BOT CLASS ============
 
 class VoiceBot:
     def __init__(self):
@@ -654,6 +561,7 @@ Made with ❤️ by {DEV_NAME}
         user_id = str(update.effective_user.id)
         data = query.data
 
+        # Handle search voice selection
         if data.startswith("search_select_"):
             voice_key = data.replace("search_select_", "")
             if voice_key in VOICE_ARTISTS:
@@ -670,6 +578,7 @@ Made with ❤️ by {DEV_NAME}
                     parse_mode='Markdown'
                 )
 
+        # Handle search page navigation
         elif data == "search_page_next":
             current_page = self.search_pages.get(user_id, 0)
             new_page = current_page + 1
@@ -698,8 +607,12 @@ Made with ❤️ by {DEV_NAME}
             page = self.voice_pages.get(user_id, 0)
             await self.show_voice_page(update, context, user_id, page)
 
+        # Handle voice selection from /voice - FIXED
         elif data.startswith("voice_") and not data.startswith("voice_page_"):
-            voice_key = data[6:]
+            # Remove ONLY the first "voice_" prefix
+            voice_key = data[6:]  # Remove "voice_" (6 characters)
+            
+            # Try direct match
             if voice_key in VOICE_ARTISTS:
                 self.user_voices[user_id] = voice_key
                 voice = VOICE_ARTISTS[voice_key]
@@ -709,8 +622,10 @@ Made with ❤️ by {DEV_NAME}
                     parse_mode='Markdown'
                 )
             else:
+                # Try to find by matching the key
                 found = False
                 for key, voice in VOICE_ARTISTS.items():
+                    # Check if the voice_key matches any part of the key
                     if voice_key == key or voice_key in key or key in voice_key:
                         self.user_voices[user_id] = key
                         is_default = "⭐ Default Voice! " if key in DEFAULT_VOICES else ""
@@ -720,12 +635,14 @@ Made with ❤️ by {DEV_NAME}
                         )
                         found = True
                         break
+                
                 if not found:
                     await query.edit_message_text(
                         f"❌ Voice not found. Please try again.",
                         parse_mode='Markdown'
                     )
 
+        # Handle voice page navigation
         elif data == "voice_page_next":
             current_page = self.voice_pages.get(user_id, 0)
             new_page = current_page + 1
@@ -736,6 +653,7 @@ Made with ❤️ by {DEV_NAME}
             new_page = max(0, current_page - 1)
             await self.show_voice_page(update, context, user_id, new_page)
 
+        # Handle language selection
         elif data.startswith("lang_") and not data.startswith("lang_page_"):
             lang_code = data.replace("lang_", "")
             if lang_code in LANGUAGES:
@@ -746,6 +664,7 @@ Made with ❤️ by {DEV_NAME}
                     parse_mode='Markdown'
                 )
 
+        # Handle language page navigation
         elif data == "lang_page_next":
             current_page = self.lang_pages.get(user_id, 0)
             new_page = current_page + 1
@@ -797,114 +716,63 @@ Made with ❤️ by {DEV_NAME}
             elif update.callback_query:
                 await update.callback_query.edit_message_text("⚠️ Service unavailable. Please try again.")
 
-# ============ CREATE BOT INSTANCE ============
+def run_bot():
+    bot = VoiceBot()
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
 
-bot = VoiceBot()
+    app.add_handler(CommandHandler("start", bot.start_command))
+    app.add_handler(CommandHandler("help", bot.help_command))
+    app.add_handler(CommandHandler("language", bot.language_command))
+    app.add_handler(CommandHandler("voice", bot.voice_command))
+    app.add_handler(CommandHandler("search", bot.search_command))
+    app.add_handler(CommandHandler("voices", bot.voices_command))
+    app.add_handler(CommandHandler("emotions", bot.emotions_command))
+    app.add_handler(CommandHandler("sample", bot.sample_command))
+    app.add_handler(CommandHandler("about", bot.about_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_text))
+    app.add_handler(CallbackQueryHandler(bot.button_callback))
+    app.add_error_handler(bot.error_handler)
 
-# ============ FLASK ENDPOINTS ============
+    webhook_url = os.environ.get("WEBHOOK_URL")
 
-@app.route('/start', methods=['GET'])
-def start_bot():
-    """Start the bot by setting webhook."""
-    try:
-        vercel_url = os.environ.get("VERCEL_URL")
-        if not vercel_url:
-            return jsonify({"error": "VERCEL_URL not set"}), 400
-        
-        webhook_url = f"https://{vercel_url}/webhook"
-        response = requests.get(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}"
+    logger.info(f"🎙️ {BOT_NAME} by {DEV_NAME} is running...")
+    logger.info(f"🌍 {len(LANGUAGES)} languages supported")
+    logger.info(f"🎤 {len(VOICE_ARTISTS)} voice artists available ({len(DEFAULT_VOICES)} defaults)")
+    logger.info(f"😊 {len(EMOTIONS)} emotion tags")
+
+    if webhook_url:
+        logger.info(f"🌐 Starting webhook on port {PORT}")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            webhook_url=webhook_url,
+            drop_pending_updates=True
         )
-        
-        if response.status_code == 200:
-            logger.info(f"Bot started with webhook: {webhook_url}")
-            return jsonify({
-                "status": "success",
-                "message": "Bot started successfully",
-                "webhook_url": webhook_url,
-                "telegram_response": response.json()
-            }), 200
-        else:
-            return jsonify({
-                "status": "error",
-                "message": "Failed to set webhook",
-                "telegram_response": response.json()
-            }), 500
-            
-    except Exception as e:
-        logger.error(f"Start bot error: {e}")
-        return jsonify({"error": str(e)}), 500
+    else:
+        logger.info("📡 Starting in polling mode...")
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-@app.route('/webhook', methods=['POST'])
-async def webhook():
-    try:
-        data = request.get_json()
-        if not data:
-            return "No data", 400
-        
-        application = Application.builder().token(TELEGRAM_TOKEN).build()
-        
-        application.add_handler(CommandHandler("start", bot.start_command))
-        application.add_handler(CommandHandler("help", bot.help_command))
-        application.add_handler(CommandHandler("language", bot.language_command))
-        application.add_handler(CommandHandler("voice", bot.voice_command))
-        application.add_handler(CommandHandler("search", bot.search_command))
-        application.add_handler(CommandHandler("voices", bot.voices_command))
-        application.add_handler(CommandHandler("emotions", bot.emotions_command))
-        application.add_handler(CommandHandler("sample", bot.sample_command))
-        application.add_handler(CommandHandler("about", bot.about_command))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_text))
-        application.add_handler(CallbackQueryHandler(bot.button_callback))
-        application.add_error_handler(bot.error_handler)
-        
-        update = Update.de_json(data, application.bot)
-        await application.process_update(update)
-        
-        return "OK", 200
-    except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        return "Error", 500
+def main():
+    from werkzeug.serving import run_simple
 
-@app.route('/')
-def health_check():
-    return jsonify({
-        "status": "healthy",
-        "bot_name": BOT_NAME,
-        "voices": len(VOICE_ARTISTS),
-        "version": "3.0"
-    }), 200
+    def signal_handler(sig, frame):
+        logger.info("🛑 Shutting down...")
+        sys.exit(0)
 
-@app.route('/health')
-def health():
-    return jsonify({
-        "status": "healthy",
-        "timestamp": datetime.now().isoformat(),
-        "uptime": str(datetime.now() - bot.start_time)
-    }), 200
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
-# ============ MAIN ============
+    import threading
+    flask_thread = threading.Thread(target=lambda: run_simple(
+        "0.0.0.0", PORT, flask_app, use_reloader=False, use_debugger=False
+    ))
+    flask_thread.daemon = True
+    flask_thread.start()
+
+    logger.info(f"🌐 Health check available at http://0.0.0.0:{PORT}/")
+    logger.info(f"🌐 Health check available at http://0.0.0.0:{PORT}/health")
+
+    run_bot()
 
 if __name__ == "__main__":
-    if os.environ.get("VERCEL_URL"):
-        webhook_url = f"https://{os.environ.get('VERCEL_URL')}/webhook"
-        try:
-            requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}")
-            logger.info(f"Webhook set to: {webhook_url}")
-        except Exception as e:
-            logger.error(f"Failed to set webhook: {e}")
-    else:
-        logger.info("Starting in polling mode...")
-        application = Application.builder().token(TELEGRAM_TOKEN).build()
-        application.add_handler(CommandHandler("start", bot.start_command))
-        application.add_handler(CommandHandler("help", bot.help_command))
-        application.add_handler(CommandHandler("language", bot.language_command))
-        application.add_handler(CommandHandler("voice", bot.voice_command))
-        application.add_handler(CommandHandler("search", bot.search_command))
-        application.add_handler(CommandHandler("voices", bot.voices_command))
-        application.add_handler(CommandHandler("emotions", bot.emotions_command))
-        application.add_handler(CommandHandler("sample", bot.sample_command))
-        application.add_handler(CommandHandler("about", bot.about_command))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_text))
-        application.add_handler(CallbackQueryHandler(bot.button_callback))
-        application.add_error_handler(bot.error_handler)
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+    main()
