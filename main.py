@@ -9,10 +9,107 @@ from datetime import datetime
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
-from config import (
-    TELEGRAM_TOKEN, FISH_API_KEY, BOT_NAME, DEV_NAME, DEV_ALIAS,
-    MAX_CHARS, PORT, VOICES_FILE, MAX_VOICES, DEFAULT_VOICES, EMOTIONS, LANGUAGES
-)
+
+# ============ CONFIGURATION (All in One) ============
+
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8107617495:AAEjCpxJ0qVmG1m7C5rzAU_maM2t9IlnUJs")
+FISH_API_KEY = os.environ.get("FISH_API_KEY", "sk-fish-2IfHrnq1IG3lhnGoCFVbiNwRrdoR_yM4OXZEb7KfO_g")
+
+BOT_NAME = "VoiceStudio Pro"
+DEV_NAME = "J 🧃"
+DEV_ALIAS = "Jews"
+MAX_CHARS = 5000
+PORT = int(os.environ.get("PORT", 8080))
+
+VOICES_FILE = "all_voices.json"
+MAX_VOICES = 999
+
+# ========== DEFAULT VOICES (Always Available) ==========
+DEFAULT_VOICES = {
+    "studio_pro": {
+        "name": "Studio Pro",
+        "reference_id": "95496a7632a14321891943545846c31c",
+        "emoji": "🎙️",
+        "description": "Professional studio quality voice"
+    },
+    "dave": {
+        "name": "Dave",
+        "reference_id": "08bc8442f20945b4a7bce5bde11f2505",
+        "emoji": "👨",
+        "description": "Clear, serious, informative male voice"
+    },
+    "deep_dave": {
+        "name": "Deep Dave",
+        "reference_id": "5d992f2f63074d31a99413fdb157a565",
+        "emoji": "🧘",
+        "description": "Deep, meditative, calm male voice"
+    },
+    "calm": {
+        "name": "Calm Voice",
+        "reference_id": "b347db033a6549378b48d00acb0d06cd",
+        "emoji": "🌊",
+        "description": "Soft, gentle, soothing voice"
+    },
+    "dave_deep_media": {
+        "name": "Dave - Male Deep Voice",
+        "reference_id": "0dd3903013144408b29b7e74ca9e8614",
+        "emoji": "👨",
+        "description": "Male · English · Deep voice for Media and AI"
+    },
+    "ramsey_dave": {
+        "name": "ramsey dave",
+        "reference_id": "0eb1c3a354fc4c0aad24570fdb437746",
+        "emoji": "👨",
+        "description": "Male · English · Confident, authoritative, educational"
+    }
+}
+
+EMOTIONS = {
+    "happy": "[happy]",
+    "sad": "[sad]",
+    "angry": "[angry]",
+    "excited": "[excited]",
+    "calm": "[calm]",
+    "laughing": "[laughing]",
+    "whispering": "[whispering]",
+    "serious": "[serious]",
+    "friendly": "[friendly]",
+    "neutral": "[neutral]"
+}
+
+LANGUAGES = {
+    "af": "🇿🇦 Afrikaans", "am": "🇪🇹 Amharic", "ar": "🇸🇦 Arabic",
+    "as": "🇮🇳 Assamese", "az": "🇦🇿 Azerbaijani", "be": "🇧🇾 Belarusian",
+    "bg": "🇧🇬 Bulgarian", "bn": "🇧🇩 Bengali", "bodo": "🇮🇳 Bodo",
+    "bs": "🇧🇦 Bosnian", "ca": "🇪🇸 Catalan", "cs": "🇨🇿 Czech",
+    "cy": "🇬🇧 Welsh", "da": "🇩🇰 Danish", "de": "🇩🇪 German",
+    "doi": "🇮🇳 Dogri", "el": "🇬🇷 Greek", "en": "🇬🇧 English",
+    "es": "🇪🇸 Spanish", "et": "🇪🇪 Estonian", "eu": "🇪🇸 Basque",
+    "fa": "🇮🇷 Persian", "fi": "🇫🇮 Finnish", "fil": "🇵🇭 Filipino",
+    "fr": "🇫🇷 French", "ga": "🇮🇪 Irish", "gl": "🇪🇸 Galician",
+    "gu": "🇮🇳 Gujarati", "he": "🇮🇱 Hebrew", "hi": "🇮🇳 Hindi",
+    "hr": "🇭🇷 Croatian", "hu": "🇭🇺 Hungarian", "hy": "🇦🇲 Armenian",
+    "id": "🇮🇩 Indonesian", "is": "🇮🇸 Icelandic", "it": "🇮🇹 Italian",
+    "ja": "🇯🇵 Japanese", "ka": "🇬🇪 Georgian", "kk": "🇰🇿 Kazakh",
+    "km": "🇰🇭 Khmer", "kn": "🇮🇳 Kannada", "ko": "🇰🇷 Korean",
+    "kok": "🇮🇳 Konkani", "ks": "🇮🇳 Kashmiri", "lo": "🇱🇦 Lao",
+    "lt": "🇱🇹 Lithuanian", "lv": "🇱🇻 Latvian", "mai": "🇮🇳 Maithili",
+    "mk": "🇲🇰 Macedonian", "ml": "🇮🇳 Malayalam", "mn": "🇲🇳 Mongolian",
+    "mni": "🇮🇳 Manipuri", "mr": "🇮🇳 Marathi", "ms": "🇲🇾 Malay",
+    "my": "🇲🇲 Burmese", "nb": "🇳🇴 Norwegian", "ne": "🇳🇵 Nepali",
+    "nl": "🇳🇱 Dutch", "or": "🇮🇳 Odia", "pa": "🇮🇳 Punjabi",
+    "pl": "🇵🇱 Polish", "ps": "🇦🇫 Pashto", "pt": "🇵🇹 Portuguese",
+    "ro": "🇷🇴 Romanian", "ru": "🇷🇺 Russian", "sat": "🇮🇳 Santali",
+    "sd": "🇵🇰 Sindhi", "si": "🇱🇰 Sinhala", "sk": "🇸🇰 Slovak",
+    "sl": "🇸🇮 Slovenian", "sq": "🇦🇱 Albanian", "sr": "🇷🇸 Serbian",
+    "sv": "🇸🇪 Swedish", "sw": "🇹🇿 Swahili", "ta": "🇮🇳 Tamil",
+    "te": "🇮🇳 Telugu", "tg": "🇹🇯 Tajik", "th": "🇹🇭 Thai",
+    "tk": "🇹🇲 Turkmen", "tr": "🇹🇷 Turkish", "uk": "🇺🇦 Ukrainian",
+    "ur": "🇵🇰 Urdu", "uz": "🇺🇿 Uzbek", "vi": "🇻🇳 Vietnamese",
+    "xh": "🇿🇦 Xhosa", "zh": "🇨🇳 Chinese", "zu": "🇿🇦 Zulu"
+}
+
+# ============ FLASK APP ============
 
 app = Flask(__name__)
 
@@ -21,6 +118,8 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# ============ VOICE LOADER ============
 
 def load_voices_from_json():
     try:
@@ -90,6 +189,8 @@ def load_voices_from_json():
 
 VOICE_ARTISTS = load_voices_from_json()
 
+# ============ VOICE GENERATOR ============
+
 def generate_voice(text, reference_id):
     try:
         response = requests.post(
@@ -117,6 +218,8 @@ def generate_voice(text, reference_id):
     except Exception as e:
         logger.error(f"Error: {e}")
         return None
+
+# ============ BOT CLASS ============
 
 class VoiceBot:
     def __init__(self):
@@ -696,23 +799,22 @@ Made with ❤️ by {DEV_NAME}
             elif update.callback_query:
                 await update.callback_query.edit_message_text("⚠️ Service unavailable. Please try again.")
 
-# Create bot instance
+# ============ CREATE BOT INSTANCE ============
+
 bot = VoiceBot()
 
-# WEBHOOK ENDPOINT - This is what Vercel calls
+# ============ WEBHOOK ENDPOINT ============
+
 @app.route('/webhook', methods=['POST'])
 async def webhook():
     """Handle incoming Telegram updates via webhook."""
     try:
-        # Get the update from Telegram
         data = request.get_json()
         if not data:
             return "No data", 400
         
-        # Create the application
         application = Application.builder().token(TELEGRAM_TOKEN).build()
         
-        # Add handlers
         application.add_handler(CommandHandler("start", bot.start_command))
         application.add_handler(CommandHandler("help", bot.help_command))
         application.add_handler(CommandHandler("language", bot.language_command))
@@ -726,7 +828,6 @@ async def webhook():
         application.add_handler(CallbackQueryHandler(bot.button_callback))
         application.add_error_handler(bot.error_handler)
         
-        # Process the update
         update = Update.de_json(data, application.bot)
         await application.process_update(update)
         
@@ -741,10 +842,12 @@ def set_webhook():
     try:
         webhook_url = os.environ.get("WEBHOOK_URL")
         if not webhook_url:
-            # Auto-detect the webhook URL
-            webhook_url = f"https://{os.environ.get('VERCEL_URL', 'localhost')}/webhook"
+            vercel_url = os.environ.get("VERCEL_URL", "")
+            if vercel_url:
+                webhook_url = f"https://{vercel_url}/webhook"
+            else:
+                return {"error": "WEBHOOK_URL not set"}, 400
         
-        # Set webhook
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}"
         response = requests.get(url)
         return response.json(), 200
@@ -759,13 +862,20 @@ def health_check():
 def health():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}, 200
 
-# For local development
+# ============ MAIN ============
+
 if __name__ == "__main__":
-    # Set webhook for production
+    # For local development
+    logger.info("🚀 Starting bot in local mode...")
+    
+    # Set webhook if in production
     if os.environ.get("VERCEL_URL"):
         webhook_url = f"https://{os.environ.get('VERCEL_URL')}/webhook"
-        requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}")
-        logger.info(f"🔗 Webhook set to: {webhook_url}")
+        try:
+            requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}")
+            logger.info(f"🔗 Webhook set to: {webhook_url}")
+        except Exception as e:
+            logger.error(f"Failed to set webhook: {e}")
     else:
         # Local development - use polling
         logger.info("📡 Starting in polling mode...")
