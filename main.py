@@ -1,4 +1,5 @@
 import os
+import os
 import sys
 import logging
 import requests
@@ -6,6 +7,7 @@ import tempfile
 import signal
 import json
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Union  # <-- ADD THIS LINE
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
