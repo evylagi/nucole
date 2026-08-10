@@ -9,7 +9,7 @@ DEV_ALIAS = "Jews"
 MAX_CHARS = 5000
 PORT = int(os.environ.get("PORT", 8080))
 
-VOICES_FILE = "all_models.json"
+VOICES_FILE = "all_voices.json"
 MAX_VOICES = 999  # Load ALL voices from JSON
 
 # ========== DEFAULT VOICES (Always Available) ==========
