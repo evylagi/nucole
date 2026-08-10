@@ -31,28 +31,58 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def load_voices_from_json():
+    """Load voices from JSON file and merge with defaults"""
     try:
         # Start with DEFAULT_VOICES (always available)
         voice_artists = dict(DEFAULT_VOICES)
+        logger.info(f"✅ Loaded {len(DEFAULT_VOICES)} default voices")
         
+        # Check if JSON file exists
         if os.path.exists(VOICES_FILE):
+            logger.info(f"📂 Loading voices from {VOICES_FILE}...")
+            
             with open(VOICES_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                voices_data = data.get('voices', [])
+                
+                # Handle different JSON formats
+                if 'models' in data:
+                    voices_data = data.get('models', [])
+                elif 'voices' in data:
+                    voices_data = data.get('voices', [])
+                else:
+                    voices_data = data.get('items', [])
+                
+                if not voices_data:
+                    logger.warning(f"⚠️ No voices found in {VOICES_FILE}")
+                    return voice_artists
+                
+                logger.info(f"📊 Found {len(voices_data)} voices in JSON file")
                 
                 # Add JSON voices
                 json_count = 0
                 for i, voice in enumerate(voices_data[:MAX_VOICES]):
-                    voice_id = voice.get('id', '')
-                    title = voice.get('title', f'Voice {i+1}')
+                    # Try different field names for voice ID
+                    voice_id = voice.get('_id') or voice.get('id') or voice.get('reference_id')
+                    if not voice_id:
+                        continue
+                    
+                    # Get title with fallbacks
+                    title = voice.get('title') or voice.get('name') or f'Voice {i+1}'
+                    
+                    # Get language
                     language = voice.get('language', 'Unknown')
+                    
+                    # Get gender
                     gender = voice.get('gender', 'Unknown')
+                    
+                    # Get description
                     description = voice.get('description', f'{gender} voice in {language}')
                     
-                    # Skip if voice already exists in defaults (avoid duplicates)
+                    # Check if this voice already exists in defaults
                     if any(v.get('reference_id') == voice_id for v in voice_artists.values()):
                         continue
                     
+                    # Determine emoji
                     emoji = "🎙️"
                     if gender.lower() in ['male', 'm']:
                         emoji = "👨"
@@ -70,15 +100,18 @@ def load_voices_from_json():
                     }
                     json_count += 1
                 
-                logger.info(f"Loaded {len(DEFAULT_VOICES)} default voices + {json_count} JSON voices")
+                logger.info(f"✅ Added {json_count} voices from JSON")
+                logger.info(f"🎤 Total voices: {len(voice_artists)}")
                 return voice_artists
         else:
-            logger.warning(f"{VOICES_FILE} not found. Using default voices only.")
-            return DEFAULT_VOICES
+            logger.warning(f"⚠️ {VOICES_FILE} not found. Using default voices only.")
+            return voice_artists
+            
     except Exception as e:
-        logger.error(f"Error loading voices: {e}")
+        logger.error(f"❌ Error loading voices: {e}")
         return DEFAULT_VOICES
 
+# Load voices
 VOICE_ARTISTS = load_voices_from_json()
 
 def generate_voice(text, reference_id):
@@ -146,11 +179,13 @@ class VoiceBot:
         await update.message.reply_text(welcome_text, parse_mode='Markdown')
 
     async def voices_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """List all voices - defaults shown first with ⭐"""
+        """List all voices - shows both default and JSON"""
         voices_text = f"🎤 *Available Voices ({len(VOICE_ARTISTS)} total)*\n\n"
         
         # Show default voices first with ⭐
         default_count = 0
+        json_count = 0
+        
         for key, voice in VOICE_ARTISTS.items():
             if key in DEFAULT_VOICES:
                 default_count += 1
@@ -158,17 +193,16 @@ class VoiceBot:
                 voices_text += f"   {voice['description']}\n\n"
         
         # Show JSON voices
-        json_count = 0
         for key, voice in VOICE_ARTISTS.items():
             if key not in DEFAULT_VOICES:
-                if json_count < 20:  # Limit to 20 JSON voices to avoid spam
+                if json_count < 20:  # Limit to avoid spam
                     voices_text += f"   {voice['emoji']} {voice['name']}\n"
                 json_count += 1
         
         if json_count > 20:
-            voices_text += f"... and {json_count - 20} more voices from library\n"
+            voices_text += f"\n... and {json_count - 20} more voices from library\n"
         
-        voices_text += f"\n⭐ = Default Voice (always available)"
+        voices_text += f"\n⭐ = Default Voice ({default_count} always available)"
         voices_text += f"\n📌 Use /voice to browse all voices with pagination"
         await update.message.reply_text(voices_text, parse_mode='Markdown')
 
@@ -180,7 +214,7 @@ class VoiceBot:
             results = []
             query_lower = query.lower()
             
-            # Search defaults first
+            # Search ALL voices (default + JSON)
             for key, voice in VOICE_ARTISTS.items():
                 name = voice['name'].lower()
                 desc = voice['description'].lower()
