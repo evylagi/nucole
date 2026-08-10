@@ -14,13 +14,14 @@ from config import (
     MAX_CHARS, PORT, VOICES_FILE, MAX_VOICES, DEFAULT_VOICES, EMOTIONS, LANGUAGES
 )
 
-flask_app = Flask(__name__)
+# Flask app for health checks
+app = Flask(__name__)
 
-@flask_app.route('/')
+@app.route('/')
 def health_check():
     return "Bot is running!", 200
 
-@flask_app.route('/health')
+@app.route('/health')
 def health():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}, 200
 
@@ -718,20 +719,20 @@ Made with ❤️ by {DEV_NAME}
 
 def run_bot():
     bot = VoiceBot()
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", bot.start_command))
-    app.add_handler(CommandHandler("help", bot.help_command))
-    app.add_handler(CommandHandler("language", bot.language_command))
-    app.add_handler(CommandHandler("voice", bot.voice_command))
-    app.add_handler(CommandHandler("search", bot.search_command))
-    app.add_handler(CommandHandler("voices", bot.voices_command))
-    app.add_handler(CommandHandler("emotions", bot.emotions_command))
-    app.add_handler(CommandHandler("sample", bot.sample_command))
-    app.add_handler(CommandHandler("about", bot.about_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_text))
-    app.add_handler(CallbackQueryHandler(bot.button_callback))
-    app.add_error_handler(bot.error_handler)
+    application.add_handler(CommandHandler("start", bot.start_command))
+    application.add_handler(CommandHandler("help", bot.help_command))
+    application.add_handler(CommandHandler("language", bot.language_command))
+    application.add_handler(CommandHandler("voice", bot.voice_command))
+    application.add_handler(CommandHandler("search", bot.search_command))
+    application.add_handler(CommandHandler("voices", bot.voices_command))
+    application.add_handler(CommandHandler("emotions", bot.emotions_command))
+    application.add_handler(CommandHandler("sample", bot.sample_command))
+    application.add_handler(CommandHandler("about", bot.about_command))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_text))
+    application.add_handler(CallbackQueryHandler(bot.button_callback))
+    application.add_error_handler(bot.error_handler)
 
     webhook_url = os.environ.get("WEBHOOK_URL")
 
@@ -742,7 +743,7 @@ def run_bot():
 
     if webhook_url:
         logger.info(f"🌐 Starting webhook on port {PORT}")
-        app.run_webhook(
+        application.run_webhook(
             listen="0.0.0.0",
             port=PORT,
             webhook_url=webhook_url,
@@ -750,7 +751,7 @@ def run_bot():
         )
     else:
         logger.info("📡 Starting in polling mode...")
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 def main():
     from werkzeug.serving import run_simple
@@ -764,7 +765,7 @@ def main():
 
     import threading
     flask_thread = threading.Thread(target=lambda: run_simple(
-        "0.0.0.0", PORT, flask_app, use_reloader=False, use_debugger=False
+        "0.0.0.0", PORT, app, use_reloader=False, use_debugger=False
     ))
     flask_thread.daemon = True
     flask_thread.start()
