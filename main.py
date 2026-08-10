@@ -300,7 +300,11 @@ class VoiceBot:
 
     async def show_voice_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: str, page: int):
         voice_keys = list(VOICE_ARTISTS.keys())
-        current_voice = self.user_voices.get(user_id, next(iter(DEFAULT_VOICES.keys())) if DEFAULT_VOICES else voice_keys[0] if voice_keys else "studio_pro")
+        if not voice_keys:
+            await update.message.reply_text("❌ No voices available.")
+            return
+            
+        current_voice = self.user_voices.get(user_id, next(iter(DEFAULT_VOICES.keys())) if DEFAULT_VOICES else voice_keys[0])
         items_per_page = 10
         total_pages = (len(voice_keys) + items_per_page - 1) // items_per_page
         
@@ -557,6 +561,7 @@ Made with ❤️ by {DEV_NAME}
         user_id = str(update.effective_user.id)
         data = query.data
 
+        # Handle search voice selection
         if data.startswith("search_select_"):
             voice_key = data.replace("search_select_", "")
             if voice_key in VOICE_ARTISTS:
@@ -573,6 +578,7 @@ Made with ❤️ by {DEV_NAME}
                     parse_mode='Markdown'
                 )
 
+        # Handle search page navigation
         elif data == "search_page_next":
             current_page = self.search_pages.get(user_id, 0)
             new_page = current_page + 1
@@ -601,11 +607,12 @@ Made with ❤️ by {DEV_NAME}
             page = self.voice_pages.get(user_id, 0)
             await self.show_voice_page(update, context, user_id, page)
 
+        # Handle voice selection from /voice - FIXED
         elif data.startswith("voice_") and not data.startswith("voice_page_"):
+            # Remove the "voice_" prefix
             voice_key = data.replace("voice_", "")
             
-            logger.info(f"Looking for voice key: {voice_key}")
-            
+            # Try direct match
             if voice_key in VOICE_ARTISTS:
                 self.user_voices[user_id] = voice_key
                 voice = VOICE_ARTISTS[voice_key]
@@ -615,9 +622,11 @@ Made with ❤️ by {DEV_NAME}
                     parse_mode='Markdown'
                 )
             else:
+                # Try to find by matching the key or partial match
                 found = False
                 for key, voice in VOICE_ARTISTS.items():
-                    if voice_key in key or key in voice_key:
+                    # Check if the voice_key matches any part of the key
+                    if voice_key == key or voice_key in key or key in voice_key:
                         self.user_voices[user_id] = key
                         is_default = "⭐ Default Voice! " if key in DEFAULT_VOICES else ""
                         await query.edit_message_text(
@@ -633,6 +642,7 @@ Made with ❤️ by {DEV_NAME}
                         parse_mode='Markdown'
                     )
 
+        # Handle voice page navigation
         elif data == "voice_page_next":
             current_page = self.voice_pages.get(user_id, 0)
             new_page = current_page + 1
@@ -643,6 +653,7 @@ Made with ❤️ by {DEV_NAME}
             new_page = max(0, current_page - 1)
             await self.show_voice_page(update, context, user_id, new_page)
 
+        # Handle language selection
         elif data.startswith("lang_") and not data.startswith("lang_page_"):
             lang_code = data.replace("lang_", "")
             if lang_code in LANGUAGES:
@@ -653,6 +664,7 @@ Made with ❤️ by {DEV_NAME}
                     parse_mode='Markdown'
                 )
 
+        # Handle language page navigation
         elif data == "lang_page_next":
             current_page = self.lang_pages.get(user_id, 0)
             new_page = current_page + 1
