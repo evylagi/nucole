@@ -6,11 +6,11 @@ import tempfile
 import signal
 import json
 from datetime import datetime
-from flask import Flask, request
+from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-# ============ CONFIGURATION (All in One) ============
+# ============ CONFIG ============
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8107617495:AAEjCpxJ0qVmG1m7C5rzAU_maM2t9IlnUJs")
 FISH_API_KEY = os.environ.get("FISH_API_KEY", "sk-fish-2IfHrnq1IG3lhnGoCFVbiNwRrdoR_yM4OXZEb7KfO_g")
@@ -24,7 +24,6 @@ PORT = int(os.environ.get("PORT", 8080))
 VOICES_FILE = "all_voices.json"
 MAX_VOICES = 999
 
-# ========== DEFAULT VOICES (Always Available) ==========
 DEFAULT_VOICES = {
     "studio_pro": {
         "name": "Studio Pro",
@@ -124,12 +123,11 @@ logger = logging.getLogger(__name__)
 def load_voices_from_json():
     try:
         voice_artists = dict(DEFAULT_VOICES)
-        logger.info(f"✅ Loaded {len(DEFAULT_VOICES)} default voices")
+        logger.info(f"Loaded {len(DEFAULT_VOICES)} default voices")
         
-        # Try both files
         for voices_file in ["all_models.json", "all_voices.json"]:
             if os.path.exists(voices_file):
-                logger.info(f"📂 Loading voices from {voices_file}...")
+                logger.info(f"Loading voices from {voices_file}...")
                 
                 with open(voices_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
@@ -144,7 +142,7 @@ def load_voices_from_json():
                     if not voices_data:
                         continue
                     
-                    logger.info(f"📊 Found {len(voices_data)} voices in {voices_file}")
+                    logger.info(f"Found {len(voices_data)} voices in {voices_file}")
                     
                     json_count = 0
                     for i, voice in enumerate(voices_data[:MAX_VOICES]):
@@ -177,14 +175,14 @@ def load_voices_from_json():
                         }
                         json_count += 1
                     
-                    logger.info(f"✅ Added {json_count} voices from {voices_file}")
-                    break  # Stop after first successful load
+                    logger.info(f"Added {json_count} voices from {voices_file}")
+                    break
         
-        logger.info(f"🎤 Total voices: {len(voice_artists)}")
+        logger.info(f"Total voices: {len(voice_artists)}")
         return voice_artists
             
     except Exception as e:
-        logger.error(f"❌ Error loading voices: {e}")
+        logger.error(f"Error loading voices: {e}")
         return DEFAULT_VOICES
 
 VOICE_ARTISTS = load_voices_from_json()
@@ -803,11 +801,42 @@ Made with ❤️ by {DEV_NAME}
 
 bot = VoiceBot()
 
-# ============ WEBHOOK ENDPOINT ============
+# ============ FLASK ENDPOINTS ============
+
+@app.route('/start', methods=['GET'])
+def start_bot():
+    """Start the bot by setting webhook."""
+    try:
+        vercel_url = os.environ.get("VERCEL_URL")
+        if not vercel_url:
+            return jsonify({"error": "VERCEL_URL not set"}), 400
+        
+        webhook_url = f"https://{vercel_url}/webhook"
+        response = requests.get(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}"
+        )
+        
+        if response.status_code == 200:
+            logger.info(f"Bot started with webhook: {webhook_url}")
+            return jsonify({
+                "status": "success",
+                "message": "Bot started successfully",
+                "webhook_url": webhook_url,
+                "telegram_response": response.json()
+            }), 200
+        else:
+            return jsonify({
+                "status": "error",
+                "message": "Failed to set webhook",
+                "telegram_response": response.json()
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Start bot error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/webhook', methods=['POST'])
 async def webhook():
-    """Handle incoming Telegram updates via webhook."""
     try:
         data = request.get_json()
         if not data:
@@ -836,49 +865,35 @@ async def webhook():
         logger.error(f"Webhook error: {e}")
         return "Error", 500
 
-@app.route('/set_webhook', methods=['GET'])
-def set_webhook():
-    """Set the webhook URL for Telegram."""
-    try:
-        webhook_url = os.environ.get("WEBHOOK_URL")
-        if not webhook_url:
-            vercel_url = os.environ.get("VERCEL_URL", "")
-            if vercel_url:
-                webhook_url = f"https://{vercel_url}/webhook"
-            else:
-                return {"error": "WEBHOOK_URL not set"}, 400
-        
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}"
-        response = requests.get(url)
-        return response.json(), 200
-    except Exception as e:
-        return {"error": str(e)}, 500
-
 @app.route('/')
 def health_check():
-    return {"status": "healthy", "bot_name": BOT_NAME, "voices": len(VOICE_ARTISTS)}, 200
+    return jsonify({
+        "status": "healthy",
+        "bot_name": BOT_NAME,
+        "voices": len(VOICE_ARTISTS),
+        "version": "3.0"
+    }), 200
 
 @app.route('/health')
 def health():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}, 200
+    return jsonify({
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "uptime": str(datetime.now() - bot.start_time)
+    }), 200
 
 # ============ MAIN ============
 
 if __name__ == "__main__":
-    # For local development
-    logger.info("🚀 Starting bot in local mode...")
-    
-    # Set webhook if in production
     if os.environ.get("VERCEL_URL"):
         webhook_url = f"https://{os.environ.get('VERCEL_URL')}/webhook"
         try:
             requests.get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}")
-            logger.info(f"🔗 Webhook set to: {webhook_url}")
+            logger.info(f"Webhook set to: {webhook_url}")
         except Exception as e:
             logger.error(f"Failed to set webhook: {e}")
     else:
-        # Local development - use polling
-        logger.info("📡 Starting in polling mode...")
+        logger.info("Starting in polling mode...")
         application = Application.builder().token(TELEGRAM_TOKEN).build()
         application.add_handler(CommandHandler("start", bot.start_command))
         application.add_handler(CommandHandler("help", bot.help_command))
