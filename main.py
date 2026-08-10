@@ -31,20 +31,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def load_voices_from_json():
-    """Load voices from JSON file and merge with defaults"""
     try:
-        # Start with DEFAULT_VOICES (always available)
         voice_artists = dict(DEFAULT_VOICES)
         logger.info(f"✅ Loaded {len(DEFAULT_VOICES)} default voices")
         
-        # Check if JSON file exists
         if os.path.exists(VOICES_FILE):
             logger.info(f"📂 Loading voices from {VOICES_FILE}...")
             
             with open(VOICES_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 
-                # Handle different JSON formats
                 if 'models' in data:
                     voices_data = data.get('models', [])
                 elif 'voices' in data:
@@ -58,31 +54,20 @@ def load_voices_from_json():
                 
                 logger.info(f"📊 Found {len(voices_data)} voices in JSON file")
                 
-                # Add JSON voices
                 json_count = 0
                 for i, voice in enumerate(voices_data[:MAX_VOICES]):
-                    # Try different field names for voice ID
                     voice_id = voice.get('_id') or voice.get('id') or voice.get('reference_id')
                     if not voice_id:
                         continue
                     
-                    # Get title with fallbacks
                     title = voice.get('title') or voice.get('name') or f'Voice {i+1}'
-                    
-                    # Get language
                     language = voice.get('language', 'Unknown')
-                    
-                    # Get gender
                     gender = voice.get('gender', 'Unknown')
-                    
-                    # Get description
                     description = voice.get('description', f'{gender} voice in {language}')
                     
-                    # Check if this voice already exists in defaults
                     if any(v.get('reference_id') == voice_id for v in voice_artists.values()):
                         continue
                     
-                    # Determine emoji
                     emoji = "🎙️"
                     if gender.lower() in ['male', 'm']:
                         emoji = "👨"
@@ -111,7 +96,6 @@ def load_voices_from_json():
         logger.error(f"❌ Error loading voices: {e}")
         return DEFAULT_VOICES
 
-# Load voices
 VOICE_ARTISTS = load_voices_from_json()
 
 def generate_voice(text, reference_id):
@@ -179,10 +163,8 @@ class VoiceBot:
         await update.message.reply_text(welcome_text, parse_mode='Markdown')
 
     async def voices_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """List all voices - shows both default and JSON"""
         voices_text = f"🎤 *Available Voices ({len(VOICE_ARTISTS)} total)*\n\n"
         
-        # Show default voices first with ⭐
         default_count = 0
         json_count = 0
         
@@ -192,10 +174,9 @@ class VoiceBot:
                 voices_text += f"⭐ {voice['emoji']} *{voice['name']}* (Default)\n"
                 voices_text += f"   {voice['description']}\n\n"
         
-        # Show JSON voices
         for key, voice in VOICE_ARTISTS.items():
             if key not in DEFAULT_VOICES:
-                if json_count < 20:  # Limit to avoid spam
+                if json_count < 20:
                     voices_text += f"   {voice['emoji']} {voice['name']}\n"
                 json_count += 1
         
@@ -207,23 +188,19 @@ class VoiceBot:
         await update.message.reply_text(voices_text, parse_mode='Markdown')
 
     async def show_search_page(self, update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: str, page: int, query: str):
-        """Show search results - defaults shown first"""
         if user_id in self.search_results and self.search_results[user_id] and self.search_results[user_id].get('query') == query:
             results = self.search_results[user_id]['results']
         else:
             results = []
             query_lower = query.lower()
             
-            # Search ALL voices (default + JSON)
             for key, voice in VOICE_ARTISTS.items():
                 name = voice['name'].lower()
                 desc = voice['description'].lower()
                 if query_lower in name or query_lower in desc:
-                    # Check if default
                     is_default = key in DEFAULT_VOICES
                     results.append((key, voice, is_default))
             
-            # Sort: defaults first, then by name
             results.sort(key=lambda x: (not x[2], x[1]['name'].lower()))
             
             self.search_results[user_id] = {
@@ -276,7 +253,6 @@ class VoiceBot:
         
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Build message with default indicator
         text = f"🔍 *Search Results for \"{query}\"*\n\n"
         text += f"Found {len(results)} voices:\n"
         text += f"Page {page + 1}/{total_pages}\n\n"
@@ -358,7 +334,6 @@ class VoiceBot:
         reply_markup = InlineKeyboardMarkup(keyboard)
         current = VOICE_ARTISTS.get(current_voice, list(VOICE_ARTISTS.values())[0] if VOICE_ARTISTS else {"name": "Unknown", "description": ""})
         
-        # Count defaults
         default_count = len(DEFAULT_VOICES)
         
         text = f"🎤 *Select Voice Artist*\n\n"
@@ -464,7 +439,26 @@ Add these tags to your text:
 ---
 ✨ *Developer:* {DEV_NAME}
         """
-        await update.message.reply_text(emotions_text, parse_mode='Markdown')
+        try:
+            await update.message.reply_text(emotions_text, parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Emotions command error: {e}")
+            await update.message.reply_text(
+                "😊 *Emotion Tags Guide*\n\n"
+                "Add these tags to your text:\n\n"
+                "• [happy] - Cheerful, joyful tone\n"
+                "• [sad] - Melancholic, emotional tone\n"
+                "• [angry] - Intense, firm tone\n"
+                "• [excited] - Energetic, enthusiastic\n"
+                "• [calm] - Relaxed, soothing tone\n"
+                "• [laughing] - Laughing while speaking\n"
+                "• [whispering] - Soft, whispered voice\n"
+                "• [serious] - Professional, serious tone\n"
+                "• [friendly] - Warm, inviting tone\n"
+                "• [neutral] - Balanced, natural tone\n\n"
+                "Example: [happy] Hello! This is a happy message.",
+                parse_mode='Markdown'
+            )
 
     async def sample_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
@@ -563,7 +557,6 @@ Made with ❤️ by {DEV_NAME}
         user_id = str(update.effective_user.id)
         data = query.data
 
-        # Handle search voice selection
         if data.startswith("search_select_"):
             voice_key = data.replace("search_select_", "")
             if voice_key in VOICE_ARTISTS:
@@ -576,17 +569,16 @@ Made with ❤️ by {DEV_NAME}
                 )
             else:
                 await query.edit_message_text(
-                    "❌ Voice not found. Please try again.",
+                    f"❌ Voice not found. Please try again.",
                     parse_mode='Markdown'
                 )
 
-        # Handle search page navigation
         elif data == "search_page_next":
             current_page = self.search_pages.get(user_id, 0)
             new_page = current_page + 1
             if user_id in self.search_results and self.search_results[user_id]:
-                query = self.search_results[user_id]['query']
-                await self.show_search_page(update, context, user_id, new_page, query)
+                query_text = self.search_results[user_id]['query']
+                await self.show_search_page(update, context, user_id, new_page, query_text)
             else:
                 await query.edit_message_text(
                     "❌ Search results expired. Please search again with /search",
@@ -597,8 +589,8 @@ Made with ❤️ by {DEV_NAME}
             current_page = self.search_pages.get(user_id, 0)
             new_page = max(0, current_page - 1)
             if user_id in self.search_results and self.search_results[user_id]:
-                query = self.search_results[user_id]['query']
-                await self.show_search_page(update, context, user_id, new_page, query)
+                query_text = self.search_results[user_id]['query']
+                await self.show_search_page(update, context, user_id, new_page, query_text)
             else:
                 await query.edit_message_text(
                     "❌ Search results expired. Please search again with /search",
@@ -609,9 +601,11 @@ Made with ❤️ by {DEV_NAME}
             page = self.voice_pages.get(user_id, 0)
             await self.show_voice_page(update, context, user_id, page)
 
-        # Handle voice selection
         elif data.startswith("voice_") and not data.startswith("voice_page_"):
             voice_key = data.replace("voice_", "")
+            
+            logger.info(f"Looking for voice key: {voice_key}")
+            
             if voice_key in VOICE_ARTISTS:
                 self.user_voices[user_id] = voice_key
                 voice = VOICE_ARTISTS[voice_key]
@@ -621,12 +615,24 @@ Made with ❤️ by {DEV_NAME}
                     parse_mode='Markdown'
                 )
             else:
-                await query.edit_message_text(
-                    "❌ Voice not found. Please try again.",
-                    parse_mode='Markdown'
-                )
+                found = False
+                for key, voice in VOICE_ARTISTS.items():
+                    if voice_key in key or key in voice_key:
+                        self.user_voices[user_id] = key
+                        is_default = "⭐ Default Voice! " if key in DEFAULT_VOICES else ""
+                        await query.edit_message_text(
+                            f"✅ Voice changed to: {voice['emoji']} *{voice['name']}*\n{is_default}{voice['description']}\n\nSend any text to hear this voice!",
+                            parse_mode='Markdown'
+                        )
+                        found = True
+                        break
+                
+                if not found:
+                    await query.edit_message_text(
+                        f"❌ Voice not found. Please try again.",
+                        parse_mode='Markdown'
+                    )
 
-        # Handle voice page navigation
         elif data == "voice_page_next":
             current_page = self.voice_pages.get(user_id, 0)
             new_page = current_page + 1
@@ -637,7 +643,6 @@ Made with ❤️ by {DEV_NAME}
             new_page = max(0, current_page - 1)
             await self.show_voice_page(update, context, user_id, new_page)
 
-        # Handle language selection
         elif data.startswith("lang_") and not data.startswith("lang_page_"):
             lang_code = data.replace("lang_", "")
             if lang_code in LANGUAGES:
@@ -648,7 +653,6 @@ Made with ❤️ by {DEV_NAME}
                     parse_mode='Markdown'
                 )
 
-        # Handle language page navigation
         elif data == "lang_page_next":
             current_page = self.lang_pages.get(user_id, 0)
             new_page = current_page + 1
