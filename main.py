@@ -609,8 +609,8 @@ Made with ❤️ by {DEV_NAME}
 
         # Handle voice selection from /voice - FIXED
         elif data.startswith("voice_") and not data.startswith("voice_page_"):
-            # Remove the "voice_" prefix
-            voice_key = data.replace("voice_", "")
+            # Remove ONLY the first "voice_" prefix
+            voice_key = data[6:]  # Remove "voice_" (6 characters)
             
             # Try direct match
             if voice_key in VOICE_ARTISTS:
@@ -622,7 +622,7 @@ Made with ❤️ by {DEV_NAME}
                     parse_mode='Markdown'
                 )
             else:
-                # Try to find by matching the key or partial match
+                # Try to find by matching the key
                 found = False
                 for key, voice in VOICE_ARTISTS.items():
                     # Check if the voice_key matches any part of the key
