@@ -4,8 +4,8 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8107617495:AAEjCpxJ0qVmG1m7C5
 FISH_API_KEY = os.environ.get("FISH_API_KEY", "sk-fish-CP385lLpB8D-O5WI2GPLSut4Q1kXQPkwQ4_GhvCXPTw")
 
 BOT_NAME = "VoiceStudio Pro"
-DEV_NAME = "J 🧃"
-DEV_ALIAS = "Jews"
+DEV_NAME = "Let von sink in🤪"
+DEV_ALIAS = "von @KeemSGHLL"
 MAX_CHARS = 5000
 PORT = int(os.environ.get("PORT", 8080))
 
