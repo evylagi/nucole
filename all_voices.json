@@ -1,6 +1,6 @@
 {
   "fetched_at": "2026-08-09T22:40:22.403994",
-  "total": 1000,
+  "total": 1001,
   "voices": [
     {
       "id": "90e65eaaf50e4470b8e6d43ee6afd7d5",
@@ -21921,6 +21921,30 @@
       ],
       "uses": 0,
       "likes": 0
+    },
+    {
+      "id": "2238393a217d405198c3a8e4023d1e5c",
+      "title": "Ai stickman animation",
+      "language": "English",
+      "description": "A mature and authoritative middle-aged male voice with a calm, professional tone, well-suited for educational narration and documentary-style content. Its measured delivery makes it ideal for explainer videos and podcasts.",
+      "gender": "male",
+      "age": "middle-aged",
+      "tags": [
+        "male",
+        "middle-aged",
+        "educational",
+        "narration",
+        "calm",
+        "professional",
+        "clear",
+        "documentary",
+        "podcast",
+        "English",
+        "stickman",
+        "animation"
+      ],
+      "uses": 2939,
+      "likes": 18
     }
   ]
 }
