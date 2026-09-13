@@ -49,6 +49,12 @@ DEFAULT_VOICES = {
         "reference_id": "0eb1c3a354fc4c0aad24570fdb437746",
         "emoji": "👨",
         "description": "Male · English · Confident, authoritative, educational"
+    },
+    "ai_stickman_animation": {
+        "name": "Ai stickman animation",
+        "reference_id": "2238393a217d405198c3a8e4023d1e5c",
+        "emoji": "🎙️",
+        "description": "Male · English · Educational, calm, professional, documentary-style"
     }
 }
 
