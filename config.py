@@ -10,7 +10,7 @@ MAX_CHARS = 5000
 PORT = int(os.environ.get("PORT", 8080))
 
 VOICES_FILE = "all_voices.json"
-MAX_VOICES = 999  # Load ALL voices from JSON
+MAX_VOICES = 100000  # no
 
 # ========== DEFAULT VOICES (Always Available) ==========
 DEFAULT_VOICES = {
