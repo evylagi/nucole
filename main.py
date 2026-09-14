@@ -137,16 +137,21 @@ class VoiceBot:
         self.search_results = {}
         self.pending_downloads = {}
 
-    def _download_keyboard(self, file_id, caption):
-        token = f"dl_{file_id}"
+    def _download_keyboard(self, file_path, caption):
+        token = f"dl_{int(datetime.now().timestamp() * 1000)}"
         self.pending_downloads[token] = {
-            "file_id": file_id,
+            "file_path": file_path,
             "caption": caption,
             "ts": datetime.now().timestamp(),
         }
         now = datetime.now().timestamp()
-        for k in [k for k, v in self.pending_downloads.items() if now - v["ts"] > 3600]:
-            self.pending_downloads.pop(k, None)
+        for k in [k for k, v in self.pending_downloads.items() if now - v["ts"] > 1800]:
+            old = self.pending_downloads.pop(k, None)
+            if old and os.path.exists(old["file_path"]):
+                try:
+                    os.unlink(old["file_path"])
+                except Exception:
+                    pass
         return InlineKeyboardMarkup(
             [[InlineKeyboardButton("⬇️ Download MP3", callback_data=token)]]
         )
@@ -498,15 +503,14 @@ Add these tags to your text:
         if audio_file and os.path.exists(audio_file):
             caption = f"🎧 *Sample in {lang_name}*\n{voice['emoji']} {voice['name']}\n😊 [excited] [laughing]\n✨ {DEV_NAME}"
             with open(audio_file, 'rb') as audio:
-                sent = await update.message.reply_voice(
+                await update.message.reply_voice(
                     voice=audio,
                     caption=caption,
                     parse_mode='Markdown'
                 )
-            os.unlink(audio_file)
             await update.message.reply_text(
-                "🎧 Tap to download the audio as MP3:",
-                reply_markup=self._download_keyboard(sent.voice.file_id, caption)
+                "⬇️ Tap below to get this as an MP3 file:",
+                reply_markup=self._download_keyboard(audio_file, caption)
             )
         else:
             await update.message.reply_text("❌ Failed. Please try again.")
@@ -520,7 +524,7 @@ Add these tags to your text:
         about_text = f"""
 ℹ️ *About {BOT_NAME}*
 
-*Version:* 3.0
+*Version:* 3.1
 *Developer:* {DEV_NAME}
 *Languages:* 83 supported
 *Emotions:* 10 emotion tags
@@ -566,16 +570,15 @@ Made with ❤️ by {DEV_NAME}
                 caption += f"\n😊 Emotion: {', '.join(detected_emotions)}"
             caption += f"\n✨ {DEV_NAME}"
             with open(audio_file, 'rb') as audio:
-                sent = await update.message.reply_voice(
+                await update.message.reply_voice(
                     voice=audio,
                     caption=caption,
                     parse_mode='Markdown'
                 )
-            os.unlink(audio_file)
             await processing.delete()
             await update.message.reply_text(
-                "🎧 Tap to download the audio as MP3:",
-                reply_markup=self._download_keyboard(sent.voice.file_id, caption)
+                "⬇️ Tap below to get this as an MP3 file:",
+                reply_markup=self._download_keyboard(audio_file, caption)
             )
         else:
             await processing.edit_text("❌ Failed to generate voice. Please try again.")
@@ -589,17 +592,21 @@ Made with ❤️ by {DEV_NAME}
         if data.startswith("dl_"):
             entry = self.pending_downloads.get(data)
             if not entry:
-                await query.edit_message_text(
-                    "❌ Download link expired. Please generate the voice again.",
-                    parse_mode='Markdown'
-                )
+                await query.answer("❌ Download expired. Generate again.", show_alert=True)
+                return
+            file_path = entry["file_path"]
+            if not os.path.exists(file_path):
+                await query.answer("❌ File expired. Generate again.", show_alert=True)
+                self.pending_downloads.pop(data, None)
                 return
             try:
-                await query.message.reply_document(
-                    document=entry["file_id"],
-                    caption=entry["caption"],
-                    parse_mode='Markdown'
-                )
+                with open(file_path, 'rb') as f:
+                    await query.message.reply_document(
+                        document=f,
+                        filename="voice.mp3",
+                        caption=entry["caption"],
+                        parse_mode='Markdown'
+                    )
                 await query.answer("✅ Sent as MP3!")
             except Exception as e:
                 logger.error(f"download_callback error: {e}")
@@ -744,12 +751,18 @@ Made with ❤️ by {DEV_NAME}
         )
 
     async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        logger.error(f"Error: {context.error}")
+        logger.error(f"Error: {context.error}", exc_info=context.error)
         if update:
             if update.effective_message:
-                await update.effective_message.reply_text("⚠️ Service unavailable. Please try again.")
+                try:
+                    await update.effective_message.reply_text("⚠️ Service unavailable. Please try again.")
+                except Exception:
+                    pass
             elif update.callback_query:
-                await update.callback_query.edit_message_text("⚠️ Service unavailable. Please try again.")
+                try:
+                    await update.callback_query.edit_message_text("⚠️ Service unavailable. Please try again.")
+                except Exception:
+                    pass
 
 def run_bot():
     bot = VoiceBot()
