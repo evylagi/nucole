@@ -34,46 +34,46 @@ def load_voices_from_json():
     try:
         voice_artists = dict(DEFAULT_VOICES)
         logger.info(f"✅ Loaded {len(DEFAULT_VOICES)} default voices")
-        
+
         if os.path.exists(VOICES_FILE):
             logger.info(f"📂 Loading voices from {VOICES_FILE}...")
-            
+
             with open(VOICES_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                
+
                 if 'models' in data:
                     voices_data = data.get('models', [])
                 elif 'voices' in data:
                     voices_data = data.get('voices', [])
                 else:
                     voices_data = data.get('items', [])
-                
+
                 if not voices_data:
                     logger.warning(f"⚠️ No voices found in {VOICES_FILE}")
                     return voice_artists
-                
+
                 logger.info(f"📊 Found {len(voices_data)} voices in JSON file")
-                
+
                 json_count = 0
                 for i, voice in enumerate(voices_data[:MAX_VOICES]):
                     voice_id = voice.get('_id') or voice.get('id') or voice.get('reference_id')
                     if not voice_id:
                         continue
-                    
+
                     title = voice.get('title') or voice.get('name') or f'Voice {i+1}'
                     language = voice.get('language', 'Unknown')
                     gender = voice.get('gender', 'Unknown')
                     description = voice.get('description', f'{gender} voice in {language}')
-                    
+
                     if any(v.get('reference_id') == voice_id for v in voice_artists.values()):
                         continue
-                    
+
                     emoji = "🎙️"
                     if gender.lower() in ['male', 'm']:
                         emoji = "👨"
                     elif gender.lower() in ['female', 'f']:
                         emoji = "👩"
-                    
+
                     key = f"json_voice_{i+1}"
                     voice_artists[key] = {
                         "name": title[:30],
@@ -84,14 +84,14 @@ def load_voices_from_json():
                         "is_default": False
                     }
                     json_count += 1
-                
+
                 logger.info(f"✅ Added {json_count} voices from JSON")
                 logger.info(f"🎤 Total voices: {len(voice_artists)}")
                 return voice_artists
         else:
             logger.warning(f"⚠️ {VOICES_FILE} not found. Using default voices only.")
             return voice_artists
-            
+
     except Exception as e:
         logger.error(f"❌ Error loading voices: {e}")
         return DEFAULT_VOICES
@@ -179,25 +179,25 @@ class VoiceBot:
 
     async def voices_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         voices_text = f"🎤 *Available Voices ({len(VOICE_ARTISTS)} total)*\n\n"
-        
+
         default_count = 0
         json_count = 0
-        
+
         for key, voice in VOICE_ARTISTS.items():
             if key in DEFAULT_VOICES:
                 default_count += 1
                 voices_text += f"⭐ {voice['emoji']} *{voice['name']}* (Default)\n"
                 voices_text += f"   {voice['description']}\n\n"
-        
+
         for key, voice in VOICE_ARTISTS.items():
             if key not in DEFAULT_VOICES:
                 if json_count < 20:
                     voices_text += f"   {voice['emoji']} {voice['name']}\n"
                 json_count += 1
-        
+
         if json_count > 20:
             voices_text += f"\n... and {json_count - 20} more voices from library\n"
-        
+
         voices_text += f"\n⭐ = Default Voice ({default_count} always available)"
         voices_text += f"\n📌 Use /voice to browse all voices with pagination"
         await update.message.reply_text(voices_text, parse_mode='Markdown')
@@ -208,21 +208,21 @@ class VoiceBot:
         else:
             results = []
             query_lower = query.lower()
-            
+
             for key, voice in VOICE_ARTISTS.items():
                 name = voice['name'].lower()
                 desc = voice['description'].lower()
                 if query_lower in name or query_lower in desc:
                     is_default = key in DEFAULT_VOICES
                     results.append((key, voice, is_default))
-            
+
             results.sort(key=lambda x: (not x[2], x[1]['name'].lower()))
-            
+
             self.search_results[user_id] = {
                 'query': query,
                 'results': results
             }
-        
+
         if not results:
             if update.callback_query:
                 await update.callback_query.edit_message_text(
@@ -235,19 +235,19 @@ class VoiceBot:
                     parse_mode='Markdown'
                 )
             return
-        
+
         items_per_page = 5
         total_pages = (len(results) + items_per_page - 1) // items_per_page
-        
+
         if page < 0:
             page = 0
         elif page >= total_pages:
             page = total_pages - 1
-        
+
         self.search_pages[user_id] = page
         start_idx = page * items_per_page
         end_idx = min(start_idx + items_per_page, len(results))
-        
+
         keyboard = []
         for key, voice, is_default in results[start_idx:end_idx]:
             label = f"{'⭐ ' if is_default else ''}{voice['emoji']} {voice['name']}"
@@ -255,7 +255,7 @@ class VoiceBot:
                 label,
                 callback_data=f"search_select_{key}"
             )])
-        
+
         nav_row = []
         if page > 0:
             nav_row.append(InlineKeyboardButton("◀️ Previous", callback_data="search_page_prev"))
@@ -263,22 +263,22 @@ class VoiceBot:
             nav_row.append(InlineKeyboardButton("Next ▶️", callback_data="search_page_next"))
         if nav_row:
             keyboard.append(nav_row)
-        
+
         keyboard.append([InlineKeyboardButton("🎤 Back to All Voices", callback_data="search_back_to_voice")])
-        
+
         reply_markup = InlineKeyboardMarkup(keyboard)
-        
+
         text = f"🔍 *Search Results for \"{query}\"*\n\n"
         text += f"Found {len(results)} voices:\n"
         text += f"Page {page + 1}/{total_pages}\n\n"
-        
+
         for key, voice, is_default in results[start_idx:end_idx]:
             text += f"{'⭐ ' if is_default else ''}{voice['emoji']} *{voice['name']}*"
             if is_default:
                 text += " *(Default)*"
             text += f"\n   {voice['description']}\n"
             text += f"   📌 Click to select\n\n"
-        
+
         if update.callback_query:
             await update.callback_query.edit_message_text(
                 text,
@@ -295,7 +295,7 @@ class VoiceBot:
     async def search_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = str(update.effective_user.id)
         query = ' '.join(context.args) if context.args else ''
-        
+
         if not query:
             await update.message.reply_text(
                 "🔍 *How to search for voices:*\n\n"
@@ -309,7 +309,7 @@ class VoiceBot:
                 parse_mode='Markdown'
             )
             return
-        
+
         self.search_results[user_id] = None
         await self.show_search_page(update, context, user_id, 0, query)
 
@@ -318,20 +318,20 @@ class VoiceBot:
         if not voice_keys:
             await update.message.reply_text("❌ No voices available.")
             return
-            
+
         current_voice = self.user_voices.get(user_id, next(iter(DEFAULT_VOICES.keys())) if DEFAULT_VOICES else voice_keys[0])
         items_per_page = 10
         total_pages = (len(voice_keys) + items_per_page - 1) // items_per_page
-        
+
         if page < 0:
             page = 0
         elif page >= total_pages:
             page = total_pages - 1
-        
+
         self.voice_pages[user_id] = page
         start_idx = page * items_per_page
         end_idx = min(start_idx + items_per_page, len(voice_keys))
-        
+
         keyboard = []
         for key in voice_keys[start_idx:end_idx]:
             voice = VOICE_ARTISTS[key]
@@ -341,7 +341,7 @@ class VoiceBot:
                 f"{voice['emoji']} {voice['name']}{is_default}{is_current}",
                 callback_data=f"voice_{key}"
             )])
-        
+
         nav_row = []
         if page > 0:
             nav_row.append(InlineKeyboardButton("◀️ Previous", callback_data="voice_page_prev"))
@@ -349,18 +349,18 @@ class VoiceBot:
             nav_row.append(InlineKeyboardButton("Next ▶️", callback_data="voice_page_next"))
         if nav_row:
             keyboard.append(nav_row)
-        
+
         reply_markup = InlineKeyboardMarkup(keyboard)
         current = VOICE_ARTISTS.get(current_voice, list(VOICE_ARTISTS.values())[0] if VOICE_ARTISTS else {"name": "Unknown", "description": ""})
-        
+
         default_count = len(DEFAULT_VOICES)
-        
+
         text = f"🎤 *Select Voice Artist*\n\n"
         text += f"Current: {current['name']}\n"
         text += f"{current['description']}\n"
         text += f"⭐ = Default Voice ({default_count} available)\n"
         text += f"Page {page + 1}/{total_pages}"
-        
+
         if update.callback_query:
             await update.callback_query.edit_message_text(
                 text,
@@ -379,16 +379,16 @@ class VoiceBot:
         lang_codes = sorted(LANGUAGES.keys())
         items_per_page = 20
         total_pages = (len(lang_codes) + items_per_page - 1) // items_per_page
-        
+
         if page < 0:
             page = 0
         elif page >= total_pages:
             page = total_pages - 1
-        
+
         self.lang_pages[user_id] = page
         start_idx = page * items_per_page
         end_idx = min(start_idx + items_per_page, len(lang_codes))
-        
+
         keyboard = []
         for code in lang_codes[start_idx:end_idx]:
             if code in LANGUAGES:
@@ -397,7 +397,7 @@ class VoiceBot:
                     f"{LANGUAGES[code]}{is_current}",
                     callback_data=f"lang_{code}"
                 )])
-        
+
         nav_row = []
         if page > 0:
             nav_row.append(InlineKeyboardButton("◀️ Previous", callback_data="lang_page_prev"))
@@ -405,13 +405,13 @@ class VoiceBot:
             nav_row.append(InlineKeyboardButton("Next ▶️", callback_data="lang_page_next"))
         if nav_row:
             keyboard.append(nav_row)
-        
+
         keyboard.append([InlineKeyboardButton("📚 View All Languages", callback_data="view_all_langs")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         current_display = LANGUAGES.get(current_lang, "English")
-        
+
         text = f"🌍 *Select Your Language*\n\nCurrent: {current_display}\nPage {page + 1}/{total_pages}"
-        
+
         if update.callback_query:
             await update.callback_query.edit_message_text(
                 text,
@@ -606,7 +606,6 @@ Made with ❤️ by {DEV_NAME}
                 await query.answer("❌ Failed to send file.")
             return
 
-        # Handle search voice selection
         if data.startswith("search_select_"):
             voice_key = data.replace("search_select_", "")
             if voice_key in VOICE_ARTISTS:
@@ -623,7 +622,6 @@ Made with ❤️ by {DEV_NAME}
                     parse_mode='Markdown'
                 )
 
-        # Handle search page navigation
         elif data == "search_page_next":
             current_page = self.search_pages.get(user_id, 0)
             new_page = current_page + 1
@@ -652,12 +650,9 @@ Made with ❤️ by {DEV_NAME}
             page = self.voice_pages.get(user_id, 0)
             await self.show_voice_page(update, context, user_id, page)
 
-        # Handle voice selection from /voice - FIXED
         elif data.startswith("voice_") and not data.startswith("voice_page_"):
-            # Remove ONLY the first "voice_" prefix
-            voice_key = data[6:]  # Remove "voice_" (6 characters)
-            
-            # Try direct match
+            voice_key = data[6:]
+
             if voice_key in VOICE_ARTISTS:
                 self.user_voices[user_id] = voice_key
                 voice = VOICE_ARTISTS[voice_key]
@@ -667,10 +662,8 @@ Made with ❤️ by {DEV_NAME}
                     parse_mode='Markdown'
                 )
             else:
-                # Try to find by matching the key
                 found = False
                 for key, voice in VOICE_ARTISTS.items():
-                    # Check if the voice_key matches any part of the key
                     if voice_key == key or voice_key in key or key in voice_key:
                         self.user_voices[user_id] = key
                         is_default = "⭐ Default Voice! " if key in DEFAULT_VOICES else ""
@@ -680,14 +673,13 @@ Made with ❤️ by {DEV_NAME}
                         )
                         found = True
                         break
-                
+
                 if not found:
                     await query.edit_message_text(
                         f"❌ Voice not found. Please try again.",
                         parse_mode='Markdown'
                     )
 
-        # Handle voice page navigation
         elif data == "voice_page_next":
             current_page = self.voice_pages.get(user_id, 0)
             new_page = current_page + 1
@@ -698,7 +690,6 @@ Made with ❤️ by {DEV_NAME}
             new_page = max(0, current_page - 1)
             await self.show_voice_page(update, context, user_id, new_page)
 
-        # Handle language selection
         elif data.startswith("lang_") and not data.startswith("lang_page_"):
             lang_code = data.replace("lang_", "")
             if lang_code in LANGUAGES:
@@ -709,7 +700,6 @@ Made with ❤️ by {DEV_NAME}
                     parse_mode='Markdown'
                 )
 
-        # Handle language page navigation
         elif data == "lang_page_next":
             current_page = self.lang_pages.get(user_id, 0)
             new_page = current_page + 1
